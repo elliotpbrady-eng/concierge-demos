@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="robots" content="noindex,nofollow">
+<title>Luxe Skin · WhatsApp</title>
+<style>
+  :root{
+    --wa-header:#008069; --wa-bg:#efeae2; --wa-out:#d9fdd3; --wa-in:#ffffff;
+    --wa-tick:#53bdeb; --wa-deep:#111b21; --wa-sub:#667781; --brand:#b76e79;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+       background:#d2dbd4;display:flex;align-items:center;justify-content:center;color:var(--wa-deep)}
+  .phone{width:100%;max-width:430px;height:100vh;max-height:920px;display:flex;flex-direction:column;
+         background:var(--wa-bg);position:relative;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+  @media(min-width:480px){.phone{border-radius:14px;height:92vh;margin:12px}}
+  /* header */
+  .hdr{background:var(--wa-header);color:#fff;display:flex;align-items:center;gap:10px;
+       padding:10px 12px;flex:0 0 auto;z-index:3}
+  .hdr .back{font-size:22px;line-height:1;opacity:.95}
+  .avatar{width:40px;height:40px;border-radius:50%;background:var(--brand);color:#fff;display:flex;
+          align-items:center;justify-content:center;font-weight:600;font-size:15px;flex:0 0 auto}
+  .hdr .meta{flex:1;min-width:0}
+  .hdr .name{font-size:16px;font-weight:600;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hdr .status{font-size:12.5px;opacity:.85;height:15px}
+  .hdr .icons{display:flex;gap:18px;font-size:18px;opacity:.95}
+  /* chat */
+  .chat{flex:1;overflow-y:auto;padding:12px 8px 6px;display:flex;flex-direction:column;gap:3px;
+        background-image:linear-gradient(rgba(229,221,213,.5),rgba(229,221,213,.5)),
+        url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><circle cx='2' cy='2' r='1' fill='%23d8cfc4'/></svg>")}
+  .daychip{align-self:center;background:#fff;color:var(--wa-sub);font-size:12px;padding:5px 12px;
+           border-radius:8px;margin:6px 0;box-shadow:0 1px 1px rgba(0,0,0,.08)}
+  .row{display:flex;width:100%}
+  .row.out{justify-content:flex-end}
+  .bubble{max-width:78%;padding:6px 9px 8px;border-radius:8px;font-size:14.6px;line-height:1.4;
+          position:relative;box-shadow:0 1px .5px rgba(0,0,0,.13);white-space:pre-wrap;word-wrap:break-word}
+  .in .bubble{background:var(--wa-in);border-top-left-radius:0}
+  .out .bubble{background:var(--wa-out);border-top-right-radius:0}
+  .bubble .t{font-size:11px;color:var(--wa-sub);float:right;margin:6px 0 -2px 8px;display:inline-flex;
+             align-items:center;gap:3px}
+  .tick{color:var(--wa-tick);font-size:12px}
+  /* typing */
+  .typing{display:flex;gap:4px;padding:11px 12px}
+  .typing span{width:7px;height:7px;border-radius:50%;background:#9aa6ac;animation:b 1.2s infinite}
+  .typing span:nth-child(2){animation-delay:.2s}.typing span:nth-child(3){animation-delay:.4s}
+  @keyframes b{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+  /* quick replies */
+  .qr{display:flex;flex-wrap:wrap;gap:7px;padding:6px 10px 2px;justify-content:flex-end}
+  .qr button{background:#fff;color:var(--wa-header);border:1px solid #cfe9e2;border-radius:16px;
+             padding:7px 13px;font-size:13.5px;cursor:pointer;transition:.15s}
+  .qr button:hover{background:#e7f5f1}
+  /* input */
+  .inp{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:7px 9px;background:#f0f2f5}
+  .inp .field{flex:1;background:#fff;border-radius:22px;padding:10px 14px;font-size:15px;display:flex;align-items:center}
+  .inp input{border:0;outline:0;font-size:15px;width:100%;font-family:inherit}
+  .send{width:44px;height:44px;border-radius:50%;background:var(--wa-header);color:#fff;border:0;
+        font-size:19px;cursor:pointer;flex:0 0 auto;display:flex;align-items:center;justify-content:center}
+  .ribbon{position:absolute;bottom:62px;left:0;right:0;text-align:center;pointer-events:none}
+  .ribbon span{background:rgba(17,27,33,.78);color:#fff;font-size:11px;padding:4px 10px;border-radius:10px;
+               pointer-events:auto}
+  .ribbon a{color:#7ee0c9;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="hdr">
+    <div class="back">‹</div>
+    <div class="avatar">LS</div>
+    <div class="meta">
+      <div class="name">Luxe Skin</div>
+      <div class="status" id="status">online</div>
+    </div>
+    <div class="icons"><span>📷</span><span>📞</span><span>⋮</span></div>
+  </div>
+  <div class="chat" id="chat"><div class="daychip">TODAY</div></div>
+  <div class="qr" id="qr"></div>
+  <div class="inp">
+    <div class="field"><input id="msg" autocomplete="off" placeholder="Type a message" /></div>
+    <button class="send" id="send" aria-label="Send">➤</button>
+  </div>
+  <div class="ribbon"><span>Live demo · powered by <a href="#">Concierge</a></span></div>
+</div>
+<script>
+const BRAIN = {"opening": ["Hi, you're through to Priya at Luxe Skin in Glasgow.", "Happy to help with anything about our treatments or booking a consultation with Dr Q."], "quick_replies": ["Do I need a consultation?", "How much is Botox?", "Where are you based?", "How do I book?"], "intents": [{"id": "botox", "patterns": ["botox", "anti wrinkle", "anti-wrinkle", "frown lines", "crows feet", "forehead lines", "wrinkles"], "reply": "Our anti-wrinkle injections soften lines like the forehead, frown and crow's feet, and Dr Q's approach is all about a natural, refreshed look rather than anything overdone. It always starts with a consultation so he can see how your muscles move before anything's decided. Shall I get one booked for you?", "quick_replies": ["Book a consultation", "Tell me about fillers"]}, {"id": "fillers", "patterns": ["filler", "fillers", "dermal filler", "lip filler", "cheeks", "volume"], "reply": "We offer dermal fillers to restore volume and balance, often alongside anti-wrinkle treatment where it suits. Everyone's face is different, so Dr Q maps out what would actually work for you at a consultation first. Want me to arrange that?", "quick_replies": ["Book a consultation", "Do I need a consultation?"]}, {"id": "morpheus8", "patterns": ["morpheus", "morpheus8", "microneedling", "skin tightening", "radiofrequency", "texture"], "reply": "Morpheus8 is our radiofrequency microneedling treatment, lovely for skin texture and a bit of tightening. Whether it's right for your skin is something Dr Q would talk through at a consultation. I can pop you in for one if you'd like.", "quick_replies": ["Book a consultation", "What else do you do?"]}, {"id": "consultation", "patterns": ["consultation", "consult", "do i need", "first appointment", "assessment"], "reply": ["Yes, every treatment with us begins with a consultation, it's how Dr Q keeps things safe and tailored to you.", "He'll assess your face, talk through options, and there's a cooling-off period before any treatment so you're never rushed. Shall I find you a slot?"], "quick_replies": ["Book a consultation", "Where are you based?"]}, {"id": "price", "patterns": ["price", "cost", "how much", "fee", "pricing", "expensive"], "reply": "I can't give a fixed price over chat, I'd hate to quote something that isn't right for you. Treatment, amounts and suitability are all set by Dr Q at your consultation, so the price reflects what you actually need. The consultation's the best first step, want me to book it?", "quick_replies": ["Book a consultation", "Do I need a consultation?"]}, {"id": "safety", "patterns": ["safe", "safety", "side effects", "qualified", "doctor", "risk", "regulated"], "reply": "Completely understand wanting to check. All treatments are carried out by Dr Q, a GMC-registered doctor with over a decade in aesthetics, and nothing goes ahead without a proper consultation and a cooling-off period. He'll go through any risks with you personally. Would a consultation put your mind at ease?", "quick_replies": ["Book a consultation", "Who is Dr Q?"]}, {"id": "location", "patterns": ["where", "address", "location", "based", "parking", "ingram"], "reply": "We're at 227 Ingram Street, right in Glasgow city centre. Easy to reach by foot from the centre. Shall I book you a consultation while you're here?", "quick_replies": ["Book a consultation", "How do I book?"]}, {"id": "booking", "patterns": ["book", "appointment", "available", "when", "slot", "diary"], "reply": "Lovely, I can get you booked in for a consultation with Dr Q. Could you let me know your name and roughly when suits you, and I'll check the diary?", "quick_replies": ["Mornings work", "Evenings work"]}], "fallback": "That's a good one for Dr Q directly, let me check with the team and come back to you. In the meantime, the best next step is usually a consultation, shall I get one in the diary for you?"};
+const chat = document.getElementById('chat'), qrBox = document.getElementById('qr'),
+      input = document.getElementById('msg'), statusEl = document.getElementById('status');
+function now(){const d=new Date();let h=d.getHours(),m=d.getMinutes();const ap=h>=12?'pm':'am';
+  h=h%12||12;return h+':'+(m<10?'0'+m:m)+' '+ap;}
+function scroll(){chat.scrollTop=chat.scrollHeight;}
+function addBubble(text, who){
+  const row=document.createElement('div');row.className='row '+(who==='out'?'out':'in');
+  const b=document.createElement('div');b.className='bubble';
+  b.innerHTML=text.replace(/&/g,'&amp;').replace(/</g,'&lt;')+
+    '<span class="t">'+now()+(who==='out'?' <span class="tick">✓✓</span>':'')+'</span>';
+  row.appendChild(b);chat.appendChild(row);scroll();
+}
+function showTyping(){statusEl.textContent='typing…';
+  const row=document.createElement('div');row.className='row in';row.id='typingrow';
+  const b=document.createElement('div');b.className='bubble';
+  b.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
+  row.appendChild(b);chat.appendChild(row);scroll();}
+function hideTyping(){const t=document.getElementById('typingrow');if(t)t.remove();statusEl.textContent='online';}
+function botSay(text, after){
+  showTyping();
+  const delay=Math.min(2200,650+text.length*22);
+  setTimeout(()=>{hideTyping();addBubble(text,'in');if(after)after();},delay);
+}
+function renderQR(list){
+  qrBox.innerHTML='';(list||[]).forEach(q=>{const btn=document.createElement('button');
+    btn.textContent=q;btn.onclick=()=>handle(q);qrBox.appendChild(btn);});
+}
+// --- intent matching (keyword scoring + synonyms) ---
+function score(text, patterns){
+  const t=text.toLowerCase();let s=0;
+  patterns.forEach(p=>{if(t.includes(p.toLowerCase()))s+=p.split(' ').length;});
+  return s;
+}
+function match(text){
+  let best=null,bestScore=0;
+  (BRAIN.intents||[]).forEach(it=>{const sc=score(text,it.patterns||[]);
+    if(sc>bestScore){bestScore=sc;best=it;}});
+  return bestScore>0?best:null;
+}
+function handle(text){
+  text=text.trim();if(!text)return;
+  addBubble(text,'out');input.value='';qrBox.innerHTML='';
+  const it=match(text);
+  if(it){
+    const replies=Array.isArray(it.reply)?it.reply:[it.reply];
+    let i=0;const next=()=>{if(i<replies.length){const r=replies[i++];
+      botSay(r, i<replies.length?next:()=>renderQR(it.quick_replies||BRAIN.quick_replies));};};
+    next();
+  } else {
+    botSay(BRAIN.fallback, ()=>renderQR(BRAIN.quick_replies));
+  }
+}
+document.getElementById('send').onclick=()=>handle(input.value);
+input.addEventListener('keydown',e=>{if(e.key==='Enter')handle(input.value);});
+// --- boot: opening messages, then quick replies ---
+(function boot(){
+  let i=0;const opens=BRAIN.opening||[];
+  const step=()=>{if(i<opens.length){botSay(opens[i++],step);}else{renderQR(BRAIN.quick_replies);}};
+  setTimeout(step,500);
+})();
+</script>
+</body>
+</html>

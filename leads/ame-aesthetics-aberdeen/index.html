@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="robots" content="noindex,nofollow">
+<title>AME Aesthetics · WhatsApp</title>
+<style>
+  :root{
+    --wa-header:#008069; --wa-bg:#efeae2; --wa-out:#d9fdd3; --wa-in:#ffffff;
+    --wa-tick:#53bdeb; --wa-deep:#111b21; --wa-sub:#667781; --brand:#a98b6f;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+       background:#d2dbd4;display:flex;align-items:center;justify-content:center;color:var(--wa-deep)}
+  .phone{width:100%;max-width:430px;height:100vh;max-height:920px;display:flex;flex-direction:column;
+         background:var(--wa-bg);position:relative;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+  @media(min-width:480px){.phone{border-radius:14px;height:92vh;margin:12px}}
+  /* header */
+  .hdr{background:var(--wa-header);color:#fff;display:flex;align-items:center;gap:10px;
+       padding:10px 12px;flex:0 0 auto;z-index:3}
+  .hdr .back{font-size:22px;line-height:1;opacity:.95}
+  .avatar{width:40px;height:40px;border-radius:50%;background:var(--brand);color:#fff;display:flex;
+          align-items:center;justify-content:center;font-weight:600;font-size:15px;flex:0 0 auto}
+  .hdr .meta{flex:1;min-width:0}
+  .hdr .name{font-size:16px;font-weight:600;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hdr .status{font-size:12.5px;opacity:.85;height:15px}
+  .hdr .icons{display:flex;gap:18px;font-size:18px;opacity:.95}
+  /* chat */
+  .chat{flex:1;overflow-y:auto;padding:12px 8px 6px;display:flex;flex-direction:column;gap:3px;
+        background-image:linear-gradient(rgba(229,221,213,.5),rgba(229,221,213,.5)),
+        url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><circle cx='2' cy='2' r='1' fill='%23d8cfc4'/></svg>")}
+  .daychip{align-self:center;background:#fff;color:var(--wa-sub);font-size:12px;padding:5px 12px;
+           border-radius:8px;margin:6px 0;box-shadow:0 1px 1px rgba(0,0,0,.08)}
+  .row{display:flex;width:100%}
+  .row.out{justify-content:flex-end}
+  .bubble{max-width:78%;padding:6px 9px 8px;border-radius:8px;font-size:14.6px;line-height:1.4;
+          position:relative;box-shadow:0 1px .5px rgba(0,0,0,.13);white-space:pre-wrap;word-wrap:break-word}
+  .in .bubble{background:var(--wa-in);border-top-left-radius:0}
+  .out .bubble{background:var(--wa-out);border-top-right-radius:0}
+  .bubble .t{font-size:11px;color:var(--wa-sub);float:right;margin:6px 0 -2px 8px;display:inline-flex;
+             align-items:center;gap:3px}
+  .tick{color:var(--wa-tick);font-size:12px}
+  /* typing */
+  .typing{display:flex;gap:4px;padding:11px 12px}
+  .typing span{width:7px;height:7px;border-radius:50%;background:#9aa6ac;animation:b 1.2s infinite}
+  .typing span:nth-child(2){animation-delay:.2s}.typing span:nth-child(3){animation-delay:.4s}
+  @keyframes b{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+  /* quick replies */
+  .qr{display:flex;flex-wrap:wrap;gap:7px;padding:6px 10px 2px;justify-content:flex-end}
+  .qr button{background:#fff;color:var(--wa-header);border:1px solid #cfe9e2;border-radius:16px;
+             padding:7px 13px;font-size:13.5px;cursor:pointer;transition:.15s}
+  .qr button:hover{background:#e7f5f1}
+  /* input */
+  .inp{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:7px 9px;background:#f0f2f5}
+  .inp .field{flex:1;background:#fff;border-radius:22px;padding:10px 14px;font-size:15px;display:flex;align-items:center}
+  .inp input{border:0;outline:0;font-size:15px;width:100%;font-family:inherit}
+  .send{width:44px;height:44px;border-radius:50%;background:var(--wa-header);color:#fff;border:0;
+        font-size:19px;cursor:pointer;flex:0 0 auto;display:flex;align-items:center;justify-content:center}
+  .ribbon{position:absolute;bottom:62px;left:0;right:0;text-align:center;pointer-events:none}
+  .ribbon span{background:rgba(17,27,33,.78);color:#fff;font-size:11px;padding:4px 10px;border-radius:10px;
+               pointer-events:auto}
+  .ribbon a{color:#7ee0c9;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="hdr">
+    <div class="back">‹</div>
+    <div class="avatar">AA</div>
+    <div class="meta">
+      <div class="name">AME Aesthetics</div>
+      <div class="status" id="status">online</div>
+    </div>
+    <div class="icons"><span>📷</span><span>📞</span><span>⋮</span></div>
+  </div>
+  <div class="chat" id="chat"><div class="daychip">TODAY</div></div>
+  <div class="qr" id="qr"></div>
+  <div class="inp">
+    <div class="field"><input id="msg" autocomplete="off" placeholder="Type a message" /></div>
+    <button class="send" id="send" aria-label="Send">➤</button>
+  </div>
+  <div class="ribbon"><span>Live demo · powered by <a href="#">Concierge</a></span></div>
+</div>
+<script>
+const BRAIN = {"opening": ["Hi there, you've reached Ella at AME Aesthetics on Spa Street.", "Ask me anything about our treatments, or I can get you in to see Aimee for a consultation."], "quick_replies": ["What are polynucleotides?", "Do I need a consultation?", "How much is anti-wrinkle?", "Where are you?"], "intents": [{"id": "anti-wrinkle", "patterns": ["anti wrinkle", "anti-wrinkle", "botox", "wrinkles", "frown", "forehead", "lines"], "reply": "Our anti-wrinkle injections are great for softening expression lines while still looking like yourself. Aimee always assesses your face properly at a consultation before deciding anything, so it's tailored and safe. Would you like me to get one booked?", "quick_replies": ["Book a consultation", "Tell me about fillers"]}, {"id": "fillers", "patterns": ["filler", "fillers", "dermal", "lip", "cheek", "volume"], "reply": "We offer dermal fillers to restore subtle volume and balance. Everyone's different, so Aimee plans what would actually suit you at a consultation rather than going in blind. Shall I sort that for you?", "quick_replies": ["Book a consultation", "What are polynucleotides?"]}, {"id": "polynucleotides", "patterns": ["polynucleotide", "polynucleotides", "skin booster", "regenerative", "texture", "quality"], "reply": "Polynucleotides are a regenerative treatment that helps with overall skin quality and freshness rather than adding volume. Whether they're right for your skin is something Aimee would talk through at a consultation. I can pop you in if you'd like.", "quick_replies": ["Book a consultation", "Do I need a consultation?"]}, {"id": "consultation", "patterns": ["consultation", "consult", "do i need", "first appointment", "assessment"], "reply": ["Yes, everything starts with a consultation with Aimee, it's how she keeps it safe and properly suited to you.", "She'll assess you, go through the options, and there's a cooling-off period before any treatment so you've time to think. Shall I find you a slot?"], "quick_replies": ["Book a consultation", "Where are you?"]}, {"id": "price", "patterns": ["price", "cost", "how much", "fee", "pricing", "cheap", "expensive"], "reply": "I can't give a set price over chat, I'd not want to quote something that doesn't fit you. The right treatment and amount is decided with Aimee at your consultation, so the price reflects what you genuinely need. Want me to book that first step?", "quick_replies": ["Book a consultation", "Do I need a consultation?"]}, {"id": "safety", "patterns": ["safe", "safety", "qualified", "nurse", "prescriber", "regulated", "risk", "side effects"], "reply": "Completely fair to check. Aimee's an independent nurse prescriber and the clinic's registered with Healthcare Improvement Scotland. Nothing happens without a consultation and a cooling-off period, and she'll go through any risks with you herself. Would a consultation reassure you?", "quick_replies": ["Book a consultation", "Who is Aimee?"]}, {"id": "location", "patterns": ["where", "address", "location", "based", "spa street", "parking", "aberdeen"], "reply": "We're at 21 Spa Street in Aberdeen city centre, a calm private setting. Shall I book you a consultation with Aimee while you're thinking about it?", "quick_replies": ["Book a consultation", "How do I book?"]}, {"id": "booking", "patterns": ["book", "appointment", "available", "slot", "diary", "when"], "reply": "Lovely, I can arrange that. Could I take your name and roughly when suits you, and I'll check Aimee's availability for a consultation?", "quick_replies": ["Daytime works", "After work works"]}], "fallback": "That's one for Aimee directly, let me check with her and come back to you. The simplest first step is usually a consultation, shall I get one in for you in the meantime?"};
+const chat = document.getElementById('chat'), qrBox = document.getElementById('qr'),
+      input = document.getElementById('msg'), statusEl = document.getElementById('status');
+function now(){const d=new Date();let h=d.getHours(),m=d.getMinutes();const ap=h>=12?'pm':'am';
+  h=h%12||12;return h+':'+(m<10?'0'+m:m)+' '+ap;}
+function scroll(){chat.scrollTop=chat.scrollHeight;}
+function addBubble(text, who){
+  const row=document.createElement('div');row.className='row '+(who==='out'?'out':'in');
+  const b=document.createElement('div');b.className='bubble';
+  b.innerHTML=text.replace(/&/g,'&amp;').replace(/</g,'&lt;')+
+    '<span class="t">'+now()+(who==='out'?' <span class="tick">✓✓</span>':'')+'</span>';
+  row.appendChild(b);chat.appendChild(row);scroll();
+}
+function showTyping(){statusEl.textContent='typing…';
+  const row=document.createElement('div');row.className='row in';row.id='typingrow';
+  const b=document.createElement('div');b.className='bubble';
+  b.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
+  row.appendChild(b);chat.appendChild(row);scroll();}
+function hideTyping(){const t=document.getElementById('typingrow');if(t)t.remove();statusEl.textContent='online';}
+function botSay(text, after){
+  showTyping();
+  const delay=Math.min(2200,650+text.length*22);
+  setTimeout(()=>{hideTyping();addBubble(text,'in');if(after)after();},delay);
+}
+function renderQR(list){
+  qrBox.innerHTML='';(list||[]).forEach(q=>{const btn=document.createElement('button');
+    btn.textContent=q;btn.onclick=()=>handle(q);qrBox.appendChild(btn);});
+}
+// --- intent matching (keyword scoring + synonyms) ---
+function score(text, patterns){
+  const t=text.toLowerCase();let s=0;
+  patterns.forEach(p=>{if(t.includes(p.toLowerCase()))s+=p.split(' ').length;});
+  return s;
+}
+function match(text){
+  let best=null,bestScore=0;
+  (BRAIN.intents||[]).forEach(it=>{const sc=score(text,it.patterns||[]);
+    if(sc>bestScore){bestScore=sc;best=it;}});
+  return bestScore>0?best:null;
+}
+function handle(text){
+  text=text.trim();if(!text)return;
+  addBubble(text,'out');input.value='';qrBox.innerHTML='';
+  const it=match(text);
+  if(it){
+    const replies=Array.isArray(it.reply)?it.reply:[it.reply];
+    let i=0;const next=()=>{if(i<replies.length){const r=replies[i++];
+      botSay(r, i<replies.length?next:()=>renderQR(it.quick_replies||BRAIN.quick_replies));};};
+    next();
+  } else {
+    botSay(BRAIN.fallback, ()=>renderQR(BRAIN.quick_replies));
+  }
+}
+document.getElementById('send').onclick=()=>handle(input.value);
+input.addEventListener('keydown',e=>{if(e.key==='Enter')handle(input.value);});
+// --- boot: opening messages, then quick replies ---
+(function boot(){
+  let i=0;const opens=BRAIN.opening||[];
+  const step=()=>{if(i<opens.length){botSay(opens[i++],step);}else{renderQR(BRAIN.quick_replies);}};
+  setTimeout(step,500);
+})();
+</script>
+</body>
+</html>
