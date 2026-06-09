@@ -84,9 +84,16 @@
   <div class="ribbon"><span>Live demo · powered by <a href="#">Concierge</a></span></div>
 </div>
 <script>
-const BRAIN = {"opening": ["Hi, you've reached The Dental Architect in Leeds — Ellie here.", "I can help with treatments, registering or booking you in. What can I do for you today?"], "quick_replies": ["Do you do Invisalign?", "Are you taking new patients?", "Do you have evening slots?", "I'm a nervous patient"], "intents": [{"id": "new_patient", "patterns": ["new patient", "register", "join", "taking patients", "sign up", "accepting"], "reply": "Yes, we'd love to welcome you to The Dental Architect. The best start is a consultation so we can understand what you're after and plan it properly. Shall I find you a slot — we've some handy evening times too?", "quick_replies": ["Yes please", "What's the first visit like?"]}, {"id": "invisalign", "patterns": ["invisalign", "aligners", "straighten", "clear braces", "crooked"], "reply": ["Yes, we do a lot of Invisalign — discreet clear aligners that straighten your teeth without fixed braces.", "The cost depends on how much movement is needed, so we confirm it at a consultation rather than quote blind, and there are payment plans to spread it. Would you like me to book you in?"], "quick_replies": ["Book a consultation", "Can I spread the cost?"]}, {"id": "cosmetic_veneers", "patterns": ["veneers", "whitening", "whiten", "bonding", "composite", "smile makeover", "cosmetic"], "reply": "We're a cosmetic-led practice — composite bonding, porcelain veneers, whitening and full smile makeovers. We design the look with you at a consultation and confirm the plan and price there. Shall I get you booked in?", "quick_replies": ["Book a consultation", "Bonding or veneers?"]}, {"id": "nervous", "patterns": ["nervous", "anxious", "scared", "phobia", "frightened", "hate the dentist"], "reply": "That's completely understandable, and very common. We take things slowly, explain everything and never rush you. Would a relaxed first visit with no treatment help you feel comfortable with us?", "quick_replies": ["Yes, that helps", "Book a gentle first visit"]}, {"id": "finance", "patterns": ["finance", "payment plan", "monthly", "spread the cost", "instalments", "afford"], "reply": "Yes — we have payment plans, so treatments like Invisalign or a smile makeover can be spread into manageable monthly payments rather than paid all at once. We go through the options at the consultation. Want me to book that in?", "quick_replies": ["Book a consultation", "How do the plans work?"]}, {"id": "emergency", "patterns": ["emergency", "pain", "toothache", "broken", "swelling", "urgent"], "reply": "Sorry you're uncomfortable — we do see emergencies. So I can find you the earliest slot, can you tell me what's going on and how long it's been?", "quick_replies": ["Toothache", "Broken tooth"]}, {"id": "hours_evening", "patterns": ["hours", "open", "times", "evening", "late", "after work"], "reply": "We're open Mon–Fri, and we run late on Mondays and Wednesdays until 8:00pm — ideal if you're working in the day. Would one of those evening slots suit you?", "quick_replies": ["A Monday evening", "A Wednesday evening"]}, {"id": "location", "patterns": ["where", "address", "based", "location", "wellington", "parking", "city centre"], "reply": "We're at 56 Wellington Street, right in Leeds city centre, LS1 2EE. Want me to send the pin and get you booked in?", "quick_replies": ["Book a consultation", "Do you have evening slots?"]}], "fallback": "Good question — let me check that with Dr Hodgson and the team and come straight back to you with the right answer. In the meantime, shall I hold an appointment slot for you?"};
+// Page config: which lead this is + where the live brain lives. The opening
+// lines + quick replies render instantly client-side (snappy, no latency); every
+// real reply is generated live by the Concierge Worker (OpenAI, key server-side).
+const CFG = {"slug": "the-dental-architect-leeds", "worker": "https://concierge-demo.elliotpbrady.workers.dev", "opening": ["Hi, you've reached The Dental Architect in Leeds — Ellie here.", "I can help with treatments, registering or booking you in. What can I do for you today?"], "quick_replies": ["Do you do Invisalign?", "Are you taking new patients?", "Do you have evening slots?", "I'm a nervous patient"]};
 const chat = document.getElementById('chat'), qrBox = document.getElementById('qr'),
-      input = document.getElementById('msg'), statusEl = document.getElementById('status');
+      input = document.getElementById('msg'), sendBtn = document.getElementById('send'),
+      statusEl = document.getElementById('status');
+const history = [];          // [{from:'them'|'biz', text}] — real turns only (not the opening)
+let busy = false;            // lock so one message resolves before the next
+
 function now(){const d=new Date();let h=d.getHours(),m=d.getMinutes();const ap=h>=12?'pm':'am';
   h=h%12||12;return h+':'+(m<10?'0'+m:m)+' '+ap;}
 function scroll(){chat.scrollTop=chat.scrollHeight;}
@@ -98,52 +105,63 @@ function addBubble(text, who){
   row.appendChild(b);chat.appendChild(row);scroll();
 }
 function showTyping(){statusEl.textContent='typing…';
+  if(document.getElementById('typingrow'))return;
   const row=document.createElement('div');row.className='row in';row.id='typingrow';
   const b=document.createElement('div');b.className='bubble';
   b.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
   row.appendChild(b);chat.appendChild(row);scroll();}
 function hideTyping(){const t=document.getElementById('typingrow');if(t)t.remove();statusEl.textContent='online';}
-function botSay(text, after){
-  showTyping();
-  const delay=Math.min(2200,650+text.length*22);
-  setTimeout(()=>{hideTyping();addBubble(text,'in');if(after)after();},delay);
-}
+function wait(ms){return new Promise(r=>setTimeout(r,ms));}
 function renderQR(list){
   qrBox.innerHTML='';(list||[]).forEach(q=>{const btn=document.createElement('button');
     btn.textContent=q;btn.onclick=()=>handle(q);qrBox.appendChild(btn);});
 }
-// --- intent matching (keyword scoring + synonyms) ---
-function score(text, patterns){
-  const t=text.toLowerCase();let s=0;
-  patterns.forEach(p=>{if(t.includes(p.toLowerCase()))s+=p.split(' ').length;});
-  return s;
+// Show a bot bubble with a realistic typing pause first.
+async function botSay(text){
+  showTyping();
+  await wait(Math.min(2200,600+text.length*22));
+  hideTyping();
+  addBubble(text,'in');
+  history.push({from:'biz',text});
 }
-function match(text){
-  let best=null,bestScore=0;
-  (BRAIN.intents||[]).forEach(it=>{const sc=score(text,it.patterns||[]);
-    if(sc>bestScore){bestScore=sc;best=it;}});
-  return bestScore>0?best:null;
-}
-function handle(text){
-  text=text.trim();if(!text)return;
+
+async function handle(text){
+  text=(text||'').trim();
+  if(!text||busy)return;
+  busy=true;input.disabled=true;
   addBubble(text,'out');input.value='';qrBox.innerHTML='';
-  const it=match(text);
-  if(it){
-    const replies=Array.isArray(it.reply)?it.reply:[it.reply];
-    let i=0;const next=()=>{if(i<replies.length){const r=replies[i++];
-      botSay(r, i<replies.length?next:()=>renderQR(it.quick_replies||BRAIN.quick_replies));};};
-    next();
-  } else {
-    botSay(BRAIN.fallback, ()=>renderQR(BRAIN.quick_replies));
+  const sent=history.slice();          // prior turns only — current msg goes in `message`
+  history.push({from:'them',text});
+  showTyping();
+  let bubbles=null, capped=false;
+  try{
+    const res=await fetch(CFG.worker,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({leadSlug:CFG.slug,message:text,history:sent})
+    });
+    const data=await res.json();
+    if(data&&Array.isArray(data.bubbles)){bubbles=data.bubbles;capped=!!data.capped;}
+  }catch(e){/* network — fall through to graceful line */}
+  hideTyping();
+  if(!bubbles||!bubbles.length){
+    bubbles=["Sorry, I dropped off there for a sec — could you say that again?"];
   }
+  for(let i=0;i<bubbles.length;i++){
+    if(i>0)await wait(350);
+    await botSay(bubbles[i]);
+  }
+  busy=false;input.disabled=false;input.focus();
+  if(!capped)renderQR(CFG.quick_replies);   // keep the prompts handy; hide once the demo caps out
 }
-document.getElementById('send').onclick=()=>handle(input.value);
+
+sendBtn.onclick=()=>handle(input.value);
 input.addEventListener('keydown',e=>{if(e.key==='Enter')handle(input.value);});
-// --- boot: opening messages, then quick replies ---
-(function boot(){
-  let i=0;const opens=BRAIN.opening||[];
-  const step=()=>{if(i<opens.length){botSay(opens[i++],step);}else{renderQR(BRAIN.quick_replies);}};
-  setTimeout(step,500);
+// --- boot: opening messages render locally (instant), then quick replies ---
+(async function boot(){
+  await wait(500);
+  for(const line of (CFG.opening||[])){await botSay(line);}
+  history.length=0;                 // opening is cosmetic; the Worker re-adds it as context
+  renderQR(CFG.quick_replies);
 })();
 </script>
 </body>

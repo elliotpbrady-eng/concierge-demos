@@ -84,9 +84,16 @@
   <div class="ribbon"><span>Live demo · powered by <a href="#">Concierge</a></span></div>
 </div>
 <script>
-const BRAIN = {"opening": ["Hello! 👋 You've reached Vizion Hair Design, tucked in The Corridor in Bath — Erin here.", "After hand-painted balayage, highlights or a cut & style? Tell me what you'd like and I'll help."], "quick_replies": ["I'd love balayage", "Book a cut & style", "Do you do extensions?", "Where are you?"], "intents": [{"id": "balayage", "patterns": ["balayage", "hand painted", "handpainted", "sun kissed", "natural blend", "lived in", "refresh"], "reply": ["Lovely — hand-painted balayage is one of our signatures here in The Corridor ✨", "A full balayage is from £130, or a balayage refresh from £100 if you're topping up an existing one. As it's painted to suit you, we'd start with a quick colour consult to confirm the look and price. Shall I book that?"], "quick_replies": ["Book a colour consult", "Balayage refresh", "How long does it take?"]}, {"id": "highlights", "patterns": ["highlights", "foils", "babylights", "blonde", "full head", "half head", "lighten"], "reply": "We do full head foils from £80, half head from £60 and babylights from £75 for a softer, finer finish. If you're not sure which suits, a quick consult sorts it. Want me to find you a slot?", "quick_replies": ["Full head foils", "Babylights", "Book a consult"]}, {"id": "cut", "patterns": ["cut", "haircut", "trim", "blow dry", "blowdry", "style", "express"], "reply": "Of course — a cut & style is from £40, an express cut from £30, or a blowdry & style from £30. Tell me a day that works and I'll check what's free.", "quick_replies": ["Book a cut & style", "Just a blowdry", "What days suit?"]}, {"id": "extensions", "patterns": ["extensions", "tape", "weft", "length", "wedding", "bridal", "occasion"], "reply": "Yes — we do hair extensions and wedding/occasion hair, both priced on consultation as it really depends on the length and look you're after. Shall I book you a consult so we can plan it properly?", "quick_replies": ["Book extensions consult", "Wedding hair", "How long does it last?"]}, {"id": "treatments", "patterns": ["olaplex", "treatment", "brazilian", "smoothing", "frizz", "condition", "bond"], "reply": "We do Olaplex at £50 and Brazilian smoothing from £100 for taming frizz and adding shine. Want me to add one to your booking, or book it on its own?", "quick_replies": ["Add Olaplex", "Brazilian smoothing", "Which suits me?"]}, {"id": "price", "patterns": ["price", "cost", "how much", "prices", "quote"], "reply": "Happy to — cut & style from £40, full head foils from £80, balayage from £130 and a balayage refresh from £100. Colour can vary with length and condition, so a quick consult gets you the exact figure. Which were you thinking?", "quick_replies": ["Balayage", "Foils", "Cut & style"]}, {"id": "hours", "patterns": ["open", "hours", "days", "saturday", "sunday", "when", "times", "late"], "reply": "We're open Tuesday 10–5, Wednesday 9:30–8 (our late night), Thursday 9:30–5:30, Friday 10–5 and Saturday 8–5 — closed Mondays and Sundays. Which day suits? I'll check what's free.", "quick_replies": ["Wednesday evening", "Saturday please", "A weekday's fine"]}, {"id": "location", "patterns": ["where", "address", "corridor", "high street", "based", "find you", "parking"], "reply": "We're at 19 High Street in The Corridor, right in the heart of Bath, BA1 5AJ — a little hidden gem of an arcade. Shall I get you booked in?", "quick_replies": ["Book me in", "What do you recommend?"]}], "fallback": "Good question — let me check that with Kate so I give you the right answer rather than a guess ✨ In the meantime, would you like me to hold you a slot?"};
+// Page config: which lead this is + where the live brain lives. The opening
+// lines + quick replies render instantly client-side (snappy, no latency); every
+// real reply is generated live by the Concierge Worker (OpenAI, key server-side).
+const CFG = {"slug": "vizion-hair-design-bath", "worker": "https://concierge-demo.elliotpbrady.workers.dev", "opening": ["Hello! 👋 You've reached Vizion Hair Design, tucked in The Corridor in Bath — Erin here.", "After hand-painted balayage, highlights or a cut & style? Tell me what you'd like and I'll help."], "quick_replies": ["I'd love balayage", "Book a cut & style", "Do you do extensions?", "Where are you?"]};
 const chat = document.getElementById('chat'), qrBox = document.getElementById('qr'),
-      input = document.getElementById('msg'), statusEl = document.getElementById('status');
+      input = document.getElementById('msg'), sendBtn = document.getElementById('send'),
+      statusEl = document.getElementById('status');
+const history = [];          // [{from:'them'|'biz', text}] — real turns only (not the opening)
+let busy = false;            // lock so one message resolves before the next
+
 function now(){const d=new Date();let h=d.getHours(),m=d.getMinutes();const ap=h>=12?'pm':'am';
   h=h%12||12;return h+':'+(m<10?'0'+m:m)+' '+ap;}
 function scroll(){chat.scrollTop=chat.scrollHeight;}
@@ -98,52 +105,63 @@ function addBubble(text, who){
   row.appendChild(b);chat.appendChild(row);scroll();
 }
 function showTyping(){statusEl.textContent='typing…';
+  if(document.getElementById('typingrow'))return;
   const row=document.createElement('div');row.className='row in';row.id='typingrow';
   const b=document.createElement('div');b.className='bubble';
   b.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
   row.appendChild(b);chat.appendChild(row);scroll();}
 function hideTyping(){const t=document.getElementById('typingrow');if(t)t.remove();statusEl.textContent='online';}
-function botSay(text, after){
-  showTyping();
-  const delay=Math.min(2200,650+text.length*22);
-  setTimeout(()=>{hideTyping();addBubble(text,'in');if(after)after();},delay);
-}
+function wait(ms){return new Promise(r=>setTimeout(r,ms));}
 function renderQR(list){
   qrBox.innerHTML='';(list||[]).forEach(q=>{const btn=document.createElement('button');
     btn.textContent=q;btn.onclick=()=>handle(q);qrBox.appendChild(btn);});
 }
-// --- intent matching (keyword scoring + synonyms) ---
-function score(text, patterns){
-  const t=text.toLowerCase();let s=0;
-  patterns.forEach(p=>{if(t.includes(p.toLowerCase()))s+=p.split(' ').length;});
-  return s;
+// Show a bot bubble with a realistic typing pause first.
+async function botSay(text){
+  showTyping();
+  await wait(Math.min(2200,600+text.length*22));
+  hideTyping();
+  addBubble(text,'in');
+  history.push({from:'biz',text});
 }
-function match(text){
-  let best=null,bestScore=0;
-  (BRAIN.intents||[]).forEach(it=>{const sc=score(text,it.patterns||[]);
-    if(sc>bestScore){bestScore=sc;best=it;}});
-  return bestScore>0?best:null;
-}
-function handle(text){
-  text=text.trim();if(!text)return;
+
+async function handle(text){
+  text=(text||'').trim();
+  if(!text||busy)return;
+  busy=true;input.disabled=true;
   addBubble(text,'out');input.value='';qrBox.innerHTML='';
-  const it=match(text);
-  if(it){
-    const replies=Array.isArray(it.reply)?it.reply:[it.reply];
-    let i=0;const next=()=>{if(i<replies.length){const r=replies[i++];
-      botSay(r, i<replies.length?next:()=>renderQR(it.quick_replies||BRAIN.quick_replies));};};
-    next();
-  } else {
-    botSay(BRAIN.fallback, ()=>renderQR(BRAIN.quick_replies));
+  const sent=history.slice();          // prior turns only — current msg goes in `message`
+  history.push({from:'them',text});
+  showTyping();
+  let bubbles=null, capped=false;
+  try{
+    const res=await fetch(CFG.worker,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({leadSlug:CFG.slug,message:text,history:sent})
+    });
+    const data=await res.json();
+    if(data&&Array.isArray(data.bubbles)){bubbles=data.bubbles;capped=!!data.capped;}
+  }catch(e){/* network — fall through to graceful line */}
+  hideTyping();
+  if(!bubbles||!bubbles.length){
+    bubbles=["Sorry, I dropped off there for a sec — could you say that again?"];
   }
+  for(let i=0;i<bubbles.length;i++){
+    if(i>0)await wait(350);
+    await botSay(bubbles[i]);
+  }
+  busy=false;input.disabled=false;input.focus();
+  if(!capped)renderQR(CFG.quick_replies);   // keep the prompts handy; hide once the demo caps out
 }
-document.getElementById('send').onclick=()=>handle(input.value);
+
+sendBtn.onclick=()=>handle(input.value);
 input.addEventListener('keydown',e=>{if(e.key==='Enter')handle(input.value);});
-// --- boot: opening messages, then quick replies ---
-(function boot(){
-  let i=0;const opens=BRAIN.opening||[];
-  const step=()=>{if(i<opens.length){botSay(opens[i++],step);}else{renderQR(BRAIN.quick_replies);}};
-  setTimeout(step,500);
+// --- boot: opening messages render locally (instant), then quick replies ---
+(async function boot(){
+  await wait(500);
+  for(const line of (CFG.opening||[])){await botSay(line);}
+  history.length=0;                 // opening is cosmetic; the Worker re-adds it as context
+  renderQR(CFG.quick_replies);
 })();
 </script>
 </body>

@@ -84,9 +84,16 @@
   <div class="ribbon"><span>Live demo · powered by <a href="#">Concierge</a></span></div>
 </div>
 <script>
-const BRAIN = {"opening": ["Hi, you've reached RB Medical Aesthetics near Cambridge - I'm Nadia.", "Happy to help with any treatment questions or get you booked in with Raluca."], "quick_replies": ["How much is Botox?", "Do I need a consultation?", "What do you offer?", "Where are you?"], "intents": [{"id": "price_refuse", "patterns": ["how much", "price", "cost", "fee", "pricing", "how much is botox", "how much for filler", "quote"], "reply": "I can't give you a fixed price I'm afraid - Raluca builds a personalised plan around your face and goals, so the right treatment and cost only become clear once she's assessed you. You'll have clear pricing at your consultation, with no pressure. Shall I find you a slot?", "quick_replies": ["Book a consultation", "What happens at one?"]}, {"id": "consultation_safety", "patterns": ["consultation", "consult", "safe", "safety", "nervous", "first time", "do i need", "is it safe"], "reply": "Always - every treatment starts with a consultation with Raluca, who's an aesthetic nurse with over 24 years in medicine, so safety and suitability come first. She talks it all through, and there's a cooling-off period before treatment so nothing is ever rushed. Would you like me to book you in?", "quick_replies": ["Book a consultation", "Who is Raluca?"]}, {"id": "treatments", "patterns": ["treatments", "services", "what do you do", "anti wrinkle", "botox", "filler", "lip", "skin", "offer", "treat"], "reply": "Raluca offers anti-wrinkle injections, dermal fillers and lip enhancement, skin boosters, hair and scalp treatments, body shaping and regenerative therapies - all built into a personalised plan. The best fit comes out of a consultation. Anything in particular on your mind?", "quick_replies": ["Anti-wrinkle injections", "Lip enhancement", "Book a consultation"]}, {"id": "wellbeing", "patterns": ["wellbeing", "wellness", "hormones", "hair loss", "blood test", "personalised plan", "assessment"], "reply": "Yes - alongside the aesthetics side, Raluca looks at things like general wellbeing, hair and scalp concerns and personalised assessments, so it's a rounded approach rather than a single treatment. She'll talk through what's right for you at a consultation. Want me to set one up?", "quick_replies": ["Book a consultation", "What treatments?"]}, {"id": "location", "patterns": ["where", "address", "location", "based", "cambridge", "haslingfield", "penn farm", "parking", "find you"], "reply": "We're at Penn Farm Studios, Harston Road, Haslingfield, just outside Cambridge (CB23 1JZ) - easy to reach with parking. Shall I book you a consultation while you're here?", "quick_replies": ["Book a consultation", "When are you open?"]}, {"id": "hours", "patterns": ["hours", "open", "when", "times", "appointment", "opening", "saturday", "days"], "reply": "We're open Monday to Friday 8 til 6, and Saturday 10 til 4. Tell me roughly when suits and I'll check Raluca's diary for a consultation.", "quick_replies": ["Book a consultation", "Saturday appointment?"]}, {"id": "booking", "patterns": ["book", "appointment", "booking", "slot", "whatsapp", "see raluca", "online"], "reply": "Lovely - I'll arrange a consultation with Raluca. Could I take your name, the best number for you, and a quick idea of what you're interested in?", "quick_replies": ["I'm interested in anti-wrinkle", "I'm interested in lips"]}], "fallback": "Good question - I'd rather check that properly with Raluca than guess, so let me come back to you. Either way, a consultation is the right first step here - shall I pencil one in?"};
+// Page config: which lead this is + where the live brain lives. The opening
+// lines + quick replies render instantly client-side (snappy, no latency); every
+// real reply is generated live by the Concierge Worker (OpenAI, key server-side).
+const CFG = {"slug": "rb-medical-aesthetics-cambridge", "worker": "https://concierge-demo.elliotpbrady.workers.dev", "opening": ["Hi, you've reached RB Medical Aesthetics near Cambridge - I'm Nadia.", "Happy to help with any treatment questions or get you booked in with Raluca."], "quick_replies": ["How much is Botox?", "Do I need a consultation?", "What do you offer?", "Where are you?"]};
 const chat = document.getElementById('chat'), qrBox = document.getElementById('qr'),
-      input = document.getElementById('msg'), statusEl = document.getElementById('status');
+      input = document.getElementById('msg'), sendBtn = document.getElementById('send'),
+      statusEl = document.getElementById('status');
+const history = [];          // [{from:'them'|'biz', text}] — real turns only (not the opening)
+let busy = false;            // lock so one message resolves before the next
+
 function now(){const d=new Date();let h=d.getHours(),m=d.getMinutes();const ap=h>=12?'pm':'am';
   h=h%12||12;return h+':'+(m<10?'0'+m:m)+' '+ap;}
 function scroll(){chat.scrollTop=chat.scrollHeight;}
@@ -98,52 +105,63 @@ function addBubble(text, who){
   row.appendChild(b);chat.appendChild(row);scroll();
 }
 function showTyping(){statusEl.textContent='typing…';
+  if(document.getElementById('typingrow'))return;
   const row=document.createElement('div');row.className='row in';row.id='typingrow';
   const b=document.createElement('div');b.className='bubble';
   b.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
   row.appendChild(b);chat.appendChild(row);scroll();}
 function hideTyping(){const t=document.getElementById('typingrow');if(t)t.remove();statusEl.textContent='online';}
-function botSay(text, after){
-  showTyping();
-  const delay=Math.min(2200,650+text.length*22);
-  setTimeout(()=>{hideTyping();addBubble(text,'in');if(after)after();},delay);
-}
+function wait(ms){return new Promise(r=>setTimeout(r,ms));}
 function renderQR(list){
   qrBox.innerHTML='';(list||[]).forEach(q=>{const btn=document.createElement('button');
     btn.textContent=q;btn.onclick=()=>handle(q);qrBox.appendChild(btn);});
 }
-// --- intent matching (keyword scoring + synonyms) ---
-function score(text, patterns){
-  const t=text.toLowerCase();let s=0;
-  patterns.forEach(p=>{if(t.includes(p.toLowerCase()))s+=p.split(' ').length;});
-  return s;
+// Show a bot bubble with a realistic typing pause first.
+async function botSay(text){
+  showTyping();
+  await wait(Math.min(2200,600+text.length*22));
+  hideTyping();
+  addBubble(text,'in');
+  history.push({from:'biz',text});
 }
-function match(text){
-  let best=null,bestScore=0;
-  (BRAIN.intents||[]).forEach(it=>{const sc=score(text,it.patterns||[]);
-    if(sc>bestScore){bestScore=sc;best=it;}});
-  return bestScore>0?best:null;
-}
-function handle(text){
-  text=text.trim();if(!text)return;
+
+async function handle(text){
+  text=(text||'').trim();
+  if(!text||busy)return;
+  busy=true;input.disabled=true;
   addBubble(text,'out');input.value='';qrBox.innerHTML='';
-  const it=match(text);
-  if(it){
-    const replies=Array.isArray(it.reply)?it.reply:[it.reply];
-    let i=0;const next=()=>{if(i<replies.length){const r=replies[i++];
-      botSay(r, i<replies.length?next:()=>renderQR(it.quick_replies||BRAIN.quick_replies));};};
-    next();
-  } else {
-    botSay(BRAIN.fallback, ()=>renderQR(BRAIN.quick_replies));
+  const sent=history.slice();          // prior turns only — current msg goes in `message`
+  history.push({from:'them',text});
+  showTyping();
+  let bubbles=null, capped=false;
+  try{
+    const res=await fetch(CFG.worker,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({leadSlug:CFG.slug,message:text,history:sent})
+    });
+    const data=await res.json();
+    if(data&&Array.isArray(data.bubbles)){bubbles=data.bubbles;capped=!!data.capped;}
+  }catch(e){/* network — fall through to graceful line */}
+  hideTyping();
+  if(!bubbles||!bubbles.length){
+    bubbles=["Sorry, I dropped off there for a sec — could you say that again?"];
   }
+  for(let i=0;i<bubbles.length;i++){
+    if(i>0)await wait(350);
+    await botSay(bubbles[i]);
+  }
+  busy=false;input.disabled=false;input.focus();
+  if(!capped)renderQR(CFG.quick_replies);   // keep the prompts handy; hide once the demo caps out
 }
-document.getElementById('send').onclick=()=>handle(input.value);
+
+sendBtn.onclick=()=>handle(input.value);
 input.addEventListener('keydown',e=>{if(e.key==='Enter')handle(input.value);});
-// --- boot: opening messages, then quick replies ---
-(function boot(){
-  let i=0;const opens=BRAIN.opening||[];
-  const step=()=>{if(i<opens.length){botSay(opens[i++],step);}else{renderQR(BRAIN.quick_replies);}};
-  setTimeout(step,500);
+// --- boot: opening messages render locally (instant), then quick replies ---
+(async function boot(){
+  await wait(500);
+  for(const line of (CFG.opening||[])){await botSay(line);}
+  history.length=0;                 // opening is cosmetic; the Worker re-adds it as context
+  renderQR(CFG.quick_replies);
 })();
 </script>
 </body>

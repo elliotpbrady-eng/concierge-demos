@@ -84,9 +84,16 @@
   <div class="ribbon"><span>Live demo · powered by <a href="#">Concierge</a></span></div>
 </div>
 <script>
-const BRAIN = {"opening": ["Hi, you've reached MediGlow by Dr Jaskaren in Adel - I'm Imogen.", "Happy to help with any treatment questions or get you booked in with Dr Jaskaren."], "quick_replies": ["How much is Botox?", "Do I need a consultation?", "What do you treat?", "Where are you?"], "intents": [{"id": "price_refuse", "patterns": ["how much", "price", "cost", "fee", "pricing", "how much is botox", "how much for filler", "quote"], "reply": "I can't pop a fixed price on that one I'm afraid - Dr Jaskaren plans every treatment around your face and what you actually need, so the figure only makes sense once she's seen you in person. You'll get clear pricing at your consultation, with no pressure. Shall I find you a slot?", "quick_replies": ["Book a consultation", "What happens at one?"]}, {"id": "consultation_safety", "patterns": ["consultation", "consult", "safe", "safety", "nervous", "first time", "do i need", "is it safe"], "reply": "Yes - everything here starts with a proper consultation with Dr Jaskaren. She talks through what's right and safe for you, and there's a cooling-off period afterwards so you've time to think rather than deciding on the spot. Would you like me to book you in?", "quick_replies": ["Book a consultation", "Who is Dr Jaskaren?"]}, {"id": "treatments", "patterns": ["treatments", "services", "what do you do", "anti wrinkle", "filler", "facial", "skin", "tweakment", "offer", "treat"], "reply": "Dr Jaskaren does anti-wrinkle injections, dermal fillers, tear trough and non-surgical nose work, skin boosters like Profhilo, plus facials, HIFU and microneedling - she's known for subtle, natural results. The right fit really comes out of a consultation. Anything in particular on your mind?", "quick_replies": ["Anti-wrinkle injections", "Skin & facials", "Book a consultation"]}, {"id": "subtle_results", "patterns": ["natural", "subtle", "overdone", "obvious", "frozen", "fresh", "tweakment", "undetectable"], "reply": "That's very much Dr Jaskaren's thing - she's known for the kind of tweak where people just say you look fresh and can't put their finger on why. Nothing overdone. She'll talk through exactly what that looks like for you at a consultation. Want me to set one up?", "quick_replies": ["Book a consultation", "What do you treat?"]}, {"id": "location", "patterns": ["where", "address", "location", "based", "adel", "leeds", "otley road", "parking", "find you"], "reply": "We're at 423A Otley Road, Adel, Leeds LS16 6AL - easy to reach in north Leeds. Shall I book you a consultation while you're here?", "quick_replies": ["Book a consultation", "When are you open?"]}, {"id": "hours", "patterns": ["hours", "open", "when", "times", "appointment", "opening", "days", "availability"], "reply": "We're open five days a week and run by appointment, so we fit around you. Tell me roughly when suits and I'll check Dr Jaskaren's diary for a consultation.", "quick_replies": ["Book a consultation", "Weekend appointment?"]}, {"id": "booking", "patterns": ["book", "appointment", "booking", "slot", "see dr jaskaren", "online"], "reply": "Lovely - I'll get you a consultation with Dr Jaskaren. Could I take your name, the best number for you, and a quick idea of what you're interested in?", "quick_replies": ["I'm interested in anti-wrinkle", "I'm interested in skin"]}], "fallback": "Good question - rather than guess, let me check that properly with Dr Jaskaren and come back to you. Either way the right first step is a consultation - shall I pencil one in?"};
+// Page config: which lead this is + where the live brain lives. The opening
+// lines + quick replies render instantly client-side (snappy, no latency); every
+// real reply is generated live by the Concierge Worker (OpenAI, key server-side).
+const CFG = {"slug": "dr-jaskaren-mediglow-leeds", "worker": "https://concierge-demo.elliotpbrady.workers.dev", "opening": ["Hi, you've reached MediGlow by Dr Jaskaren in Adel - I'm Imogen.", "Happy to help with any treatment questions or get you booked in with Dr Jaskaren."], "quick_replies": ["How much is Botox?", "Do I need a consultation?", "What do you treat?", "Where are you?"]};
 const chat = document.getElementById('chat'), qrBox = document.getElementById('qr'),
-      input = document.getElementById('msg'), statusEl = document.getElementById('status');
+      input = document.getElementById('msg'), sendBtn = document.getElementById('send'),
+      statusEl = document.getElementById('status');
+const history = [];          // [{from:'them'|'biz', text}] — real turns only (not the opening)
+let busy = false;            // lock so one message resolves before the next
+
 function now(){const d=new Date();let h=d.getHours(),m=d.getMinutes();const ap=h>=12?'pm':'am';
   h=h%12||12;return h+':'+(m<10?'0'+m:m)+' '+ap;}
 function scroll(){chat.scrollTop=chat.scrollHeight;}
@@ -98,52 +105,63 @@ function addBubble(text, who){
   row.appendChild(b);chat.appendChild(row);scroll();
 }
 function showTyping(){statusEl.textContent='typing…';
+  if(document.getElementById('typingrow'))return;
   const row=document.createElement('div');row.className='row in';row.id='typingrow';
   const b=document.createElement('div');b.className='bubble';
   b.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
   row.appendChild(b);chat.appendChild(row);scroll();}
 function hideTyping(){const t=document.getElementById('typingrow');if(t)t.remove();statusEl.textContent='online';}
-function botSay(text, after){
-  showTyping();
-  const delay=Math.min(2200,650+text.length*22);
-  setTimeout(()=>{hideTyping();addBubble(text,'in');if(after)after();},delay);
-}
+function wait(ms){return new Promise(r=>setTimeout(r,ms));}
 function renderQR(list){
   qrBox.innerHTML='';(list||[]).forEach(q=>{const btn=document.createElement('button');
     btn.textContent=q;btn.onclick=()=>handle(q);qrBox.appendChild(btn);});
 }
-// --- intent matching (keyword scoring + synonyms) ---
-function score(text, patterns){
-  const t=text.toLowerCase();let s=0;
-  patterns.forEach(p=>{if(t.includes(p.toLowerCase()))s+=p.split(' ').length;});
-  return s;
+// Show a bot bubble with a realistic typing pause first.
+async function botSay(text){
+  showTyping();
+  await wait(Math.min(2200,600+text.length*22));
+  hideTyping();
+  addBubble(text,'in');
+  history.push({from:'biz',text});
 }
-function match(text){
-  let best=null,bestScore=0;
-  (BRAIN.intents||[]).forEach(it=>{const sc=score(text,it.patterns||[]);
-    if(sc>bestScore){bestScore=sc;best=it;}});
-  return bestScore>0?best:null;
-}
-function handle(text){
-  text=text.trim();if(!text)return;
+
+async function handle(text){
+  text=(text||'').trim();
+  if(!text||busy)return;
+  busy=true;input.disabled=true;
   addBubble(text,'out');input.value='';qrBox.innerHTML='';
-  const it=match(text);
-  if(it){
-    const replies=Array.isArray(it.reply)?it.reply:[it.reply];
-    let i=0;const next=()=>{if(i<replies.length){const r=replies[i++];
-      botSay(r, i<replies.length?next:()=>renderQR(it.quick_replies||BRAIN.quick_replies));};};
-    next();
-  } else {
-    botSay(BRAIN.fallback, ()=>renderQR(BRAIN.quick_replies));
+  const sent=history.slice();          // prior turns only — current msg goes in `message`
+  history.push({from:'them',text});
+  showTyping();
+  let bubbles=null, capped=false;
+  try{
+    const res=await fetch(CFG.worker,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({leadSlug:CFG.slug,message:text,history:sent})
+    });
+    const data=await res.json();
+    if(data&&Array.isArray(data.bubbles)){bubbles=data.bubbles;capped=!!data.capped;}
+  }catch(e){/* network — fall through to graceful line */}
+  hideTyping();
+  if(!bubbles||!bubbles.length){
+    bubbles=["Sorry, I dropped off there for a sec — could you say that again?"];
   }
+  for(let i=0;i<bubbles.length;i++){
+    if(i>0)await wait(350);
+    await botSay(bubbles[i]);
+  }
+  busy=false;input.disabled=false;input.focus();
+  if(!capped)renderQR(CFG.quick_replies);   // keep the prompts handy; hide once the demo caps out
 }
-document.getElementById('send').onclick=()=>handle(input.value);
+
+sendBtn.onclick=()=>handle(input.value);
 input.addEventListener('keydown',e=>{if(e.key==='Enter')handle(input.value);});
-// --- boot: opening messages, then quick replies ---
-(function boot(){
-  let i=0;const opens=BRAIN.opening||[];
-  const step=()=>{if(i<opens.length){botSay(opens[i++],step);}else{renderQR(BRAIN.quick_replies);}};
-  setTimeout(step,500);
+// --- boot: opening messages render locally (instant), then quick replies ---
+(async function boot(){
+  await wait(500);
+  for(const line of (CFG.opening||[])){await botSay(line);}
+  history.length=0;                 // opening is cosmetic; the Worker re-adds it as context
+  renderQR(CFG.quick_replies);
 })();
 </script>
 </body>

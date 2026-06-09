@@ -84,9 +84,16 @@
   <div class="ribbon"><span>Live demo · powered by <a href="#">Concierge</a></span></div>
 </div>
 <script>
-const BRAIN = {"opening": ["Hello, you're through to Ben at the Atman Clinic in Tunbridge Wells.", "I can answer a few questions or get you booked in for an initial assessment with one of our osteopaths, whatever's easiest."], "quick_replies": ["Can you treat lower back pain?", "Do I need a referral?", "How much is an initial assessment?", "What's cranial osteopathy?"], "intents": [{"id": "initial-assessment", "patterns": ["initial", "assessment", "first appointment", "consultation", "new patient", "first visit"], "reply": "Your first visit is an initial assessment, the osteopath takes a full history, examines you and explains what's going on, and usually starts gentle treatment on the day. Shall I look at getting you booked in?", "quick_replies": ["Book an assessment", "What should I expect?"]}, {"id": "back-neck", "patterns": ["back", "lower back", "neck", "spine", "sciatica", "stiff"], "reply": "Yes, back and neck pain is one of the most common things our osteopaths help with. They'll assess it properly and tailor the treatment to you, structural or gentler approaches as suits. Would you like me to arrange an initial assessment?", "quick_replies": ["Book an assessment", "Do I need a referral?"]}, {"id": "sports-injury", "patterns": ["sports", "sports injury", "running", "knee", "shoulder", "hip", "strain", "ankle"], "reply": "Sports injuries are very much part of what we treat, the osteopath will look at the injury and how your body's moving to help you recover and get back to it. It starts with an initial assessment. Shall I find you a slot?", "quick_replies": ["Book an assessment", "What should I expect?"]}, {"id": "cranial-babies-pregnancy", "patterns": ["cranial", "baby", "babies", "children", "child", "pregnant", "pregnancy", "gentle"], "reply": "Yes, we offer cranial osteopathy and have osteopaths experienced with babies, children and pregnancy, all using very gentle techniques. They'll always assess first and tailor things carefully. Would you like me to book an initial assessment?", "quick_replies": ["Book an assessment", "What's cranial osteopathy?"]}, {"id": "referral", "patterns": ["referral", "refer", "gp", "self refer", "do i need", "insurance"], "reply": "No referral needed, you're welcome to come straight to us as a self-referral. If you're claiming on insurance it's best to check your cover first, and I can help once you know. Shall I pencil in an initial assessment?", "quick_replies": ["Book an assessment", "How much is it?"]}, {"id": "price", "patterns": ["price", "cost", "how much", "fee", "pricing", "expensive"], "reply": "I'd rather give you the right figure than guess, so let me confirm the current fee with the clinic for you. Either way the first step is an initial assessment with one of our osteopaths, where it's all explained clearly. Want me to check availability?", "quick_replies": ["Book an assessment", "Where are you based?"]}, {"id": "location-hours", "patterns": ["where", "location", "address", "southborough", "hours", "open", "when", "parking"], "reply": "We're at 112 London Road, Southborough, in Tunbridge Wells. Appointment times vary across the week, so tell me roughly when suits and I'll find something for you. Shall I do that?", "quick_replies": ["Book an assessment", "Daytime works"]}, {"id": "what-to-expect", "patterns": ["what happens", "what to expect", "nervous", "first time", "what should i wear", "how long"], "reply": "Nothing to worry about, the osteopath will talk through your history, gently examine the area, explain what they find and usually start treatment, then give you a plan. Comfy, loose clothing helps. Shall I book you in?", "quick_replies": ["Book an assessment", "Can you treat back pain?"]}], "fallback": "That's one best answered by one of our osteopaths, let me check with the team and come back to you. The simplest first step is usually an initial assessment though, would you like me to get one in the diary?"};
+// Page config: which lead this is + where the live brain lives. The opening
+// lines + quick replies render instantly client-side (snappy, no latency); every
+// real reply is generated live by the Concierge Worker (OpenAI, key server-side).
+const CFG = {"slug": "atman-clinic-tunbridge-wells", "worker": "https://concierge-demo.elliotpbrady.workers.dev", "opening": ["Hello, you're through to Ben at the Atman Clinic in Tunbridge Wells.", "I can answer a few questions or get you booked in for an initial assessment with one of our osteopaths, whatever's easiest."], "quick_replies": ["Can you treat lower back pain?", "Do I need a referral?", "How much is an initial assessment?", "What's cranial osteopathy?"]};
 const chat = document.getElementById('chat'), qrBox = document.getElementById('qr'),
-      input = document.getElementById('msg'), statusEl = document.getElementById('status');
+      input = document.getElementById('msg'), sendBtn = document.getElementById('send'),
+      statusEl = document.getElementById('status');
+const history = [];          // [{from:'them'|'biz', text}] — real turns only (not the opening)
+let busy = false;            // lock so one message resolves before the next
+
 function now(){const d=new Date();let h=d.getHours(),m=d.getMinutes();const ap=h>=12?'pm':'am';
   h=h%12||12;return h+':'+(m<10?'0'+m:m)+' '+ap;}
 function scroll(){chat.scrollTop=chat.scrollHeight;}
@@ -98,52 +105,63 @@ function addBubble(text, who){
   row.appendChild(b);chat.appendChild(row);scroll();
 }
 function showTyping(){statusEl.textContent='typing…';
+  if(document.getElementById('typingrow'))return;
   const row=document.createElement('div');row.className='row in';row.id='typingrow';
   const b=document.createElement('div');b.className='bubble';
   b.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
   row.appendChild(b);chat.appendChild(row);scroll();}
 function hideTyping(){const t=document.getElementById('typingrow');if(t)t.remove();statusEl.textContent='online';}
-function botSay(text, after){
-  showTyping();
-  const delay=Math.min(2200,650+text.length*22);
-  setTimeout(()=>{hideTyping();addBubble(text,'in');if(after)after();},delay);
-}
+function wait(ms){return new Promise(r=>setTimeout(r,ms));}
 function renderQR(list){
   qrBox.innerHTML='';(list||[]).forEach(q=>{const btn=document.createElement('button');
     btn.textContent=q;btn.onclick=()=>handle(q);qrBox.appendChild(btn);});
 }
-// --- intent matching (keyword scoring + synonyms) ---
-function score(text, patterns){
-  const t=text.toLowerCase();let s=0;
-  patterns.forEach(p=>{if(t.includes(p.toLowerCase()))s+=p.split(' ').length;});
-  return s;
+// Show a bot bubble with a realistic typing pause first.
+async function botSay(text){
+  showTyping();
+  await wait(Math.min(2200,600+text.length*22));
+  hideTyping();
+  addBubble(text,'in');
+  history.push({from:'biz',text});
 }
-function match(text){
-  let best=null,bestScore=0;
-  (BRAIN.intents||[]).forEach(it=>{const sc=score(text,it.patterns||[]);
-    if(sc>bestScore){bestScore=sc;best=it;}});
-  return bestScore>0?best:null;
-}
-function handle(text){
-  text=text.trim();if(!text)return;
+
+async function handle(text){
+  text=(text||'').trim();
+  if(!text||busy)return;
+  busy=true;input.disabled=true;
   addBubble(text,'out');input.value='';qrBox.innerHTML='';
-  const it=match(text);
-  if(it){
-    const replies=Array.isArray(it.reply)?it.reply:[it.reply];
-    let i=0;const next=()=>{if(i<replies.length){const r=replies[i++];
-      botSay(r, i<replies.length?next:()=>renderQR(it.quick_replies||BRAIN.quick_replies));};};
-    next();
-  } else {
-    botSay(BRAIN.fallback, ()=>renderQR(BRAIN.quick_replies));
+  const sent=history.slice();          // prior turns only — current msg goes in `message`
+  history.push({from:'them',text});
+  showTyping();
+  let bubbles=null, capped=false;
+  try{
+    const res=await fetch(CFG.worker,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({leadSlug:CFG.slug,message:text,history:sent})
+    });
+    const data=await res.json();
+    if(data&&Array.isArray(data.bubbles)){bubbles=data.bubbles;capped=!!data.capped;}
+  }catch(e){/* network — fall through to graceful line */}
+  hideTyping();
+  if(!bubbles||!bubbles.length){
+    bubbles=["Sorry, I dropped off there for a sec — could you say that again?"];
   }
+  for(let i=0;i<bubbles.length;i++){
+    if(i>0)await wait(350);
+    await botSay(bubbles[i]);
+  }
+  busy=false;input.disabled=false;input.focus();
+  if(!capped)renderQR(CFG.quick_replies);   // keep the prompts handy; hide once the demo caps out
 }
-document.getElementById('send').onclick=()=>handle(input.value);
+
+sendBtn.onclick=()=>handle(input.value);
 input.addEventListener('keydown',e=>{if(e.key==='Enter')handle(input.value);});
-// --- boot: opening messages, then quick replies ---
-(function boot(){
-  let i=0;const opens=BRAIN.opening||[];
-  const step=()=>{if(i<opens.length){botSay(opens[i++],step);}else{renderQR(BRAIN.quick_replies);}};
-  setTimeout(step,500);
+// --- boot: opening messages render locally (instant), then quick replies ---
+(async function boot(){
+  await wait(500);
+  for(const line of (CFG.opening||[])){await botSay(line);}
+  history.length=0;                 // opening is cosmetic; the Worker re-adds it as context
+  renderQR(CFG.quick_replies);
 })();
 </script>
 </body>

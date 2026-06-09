@@ -84,9 +84,16 @@
   <div class="ribbon"><span>Live demo · powered by <a href="#">Concierge</a></span></div>
 </div>
 <script>
-const BRAIN = {"opening": ["Hi, this is Hannah at Cromer House Dental in Liverpool.", "I can help with treatments, registering as a patient, or booking you in. What were you after?"], "quick_replies": ["Do you take new patients?", "How much is Invisalign?", "Do you do implants?", "What are your hours?"], "intents": [{"id": "new_patient", "patterns": ["new patient", "register", "join", "taking patients", "sign up", "accepting"], "reply": "Yes, we're welcoming new patients at Cromer House. The best first step is a check-up or consultation so we can get to know you and your smile. Shall I find you a slot?", "quick_replies": ["Yes please", "Is it private or NHS?"]}, {"id": "invisalign", "patterns": ["invisalign", "aligners", "straighten", "clear braces", "wonky teeth"], "reply": ["We offer Invisalign clear aligners to straighten teeth discreetly — it's a lovely option as it's nearly invisible.", "Cost depends on how much movement your teeth need, so we confirm the exact price at a consultation rather than guess. Would you like me to book one?"], "quick_replies": ["Book a consultation", "How long does it take?"]}, {"id": "implants", "patterns": ["implant", "implants", "missing tooth", "missing teeth", "replace"], "reply": "Yes, we place dental implants to replace missing teeth with a natural look and feel. We assess suitability at a consultation and give you a clear plan and price there. Would you like me to arrange that?", "quick_replies": ["Book a consultation", "How long does it last?"]}, {"id": "whitening_cosmetic", "patterns": ["whitening", "whiten", "veneers", "bonding", "composite", "smile makeover"], "reply": "We do professional whitening, composite bonding and veneers to brighten and reshape your smile. We plan the look together at a cosmetic consultation and confirm pricing there. Shall I book you in?", "quick_replies": ["Book a consultation", "Whitening or bonding?"]}, {"id": "emergency", "patterns": ["emergency", "pain", "toothache", "broken", "swelling", "urgent"], "reply": "Sorry to hear that — we do see emergency patients. So I can get you the earliest slot, can you tell me what's happening and how long it's been going on?", "quick_replies": ["Toothache", "Broken/lost filling"]}, {"id": "nervous", "patterns": ["nervous", "anxious", "scared", "phobia", "frightened", "hate dentist"], "reply": "Completely understand, and you're not alone — many of our patients feel nervous. We go gently, explain each step, and never rush you. Would a relaxed first visit with no treatment help to ease you in?", "quick_replies": ["Yes please", "Book a gentle visit"]}, {"id": "hours_location", "patterns": ["hours", "open", "times", "where", "address", "location", "parking"], "reply": "We're at 20 Archway Rd, Liverpool, L36 9XB, open Monday to Thursday 9am–6pm and Friday 8am–3pm. Want me to book you in around those times?", "quick_replies": ["Book me in", "Do you take new patients?"]}, {"id": "finance", "patterns": ["finance", "payment plan", "pay monthly", "instalments", "spread the cost"], "reply": "Larger treatments like Invisalign or implants are often easier to manage spread out, so it's worth asking about payment options at your consultation — the team can talk you through what's available. Shall I book one so you can discuss it?", "quick_replies": ["Book a consultation", "What treatments qualify?"]}], "fallback": "Good question — let me check that with the team and get straight back to you with the right answer. Meanwhile, would you like me to hold an appointment slot for you?"};
+// Page config: which lead this is + where the live brain lives. The opening
+// lines + quick replies render instantly client-side (snappy, no latency); every
+// real reply is generated live by the Concierge Worker (OpenAI, key server-side).
+const CFG = {"slug": "cromer-house-dental-liverpool", "worker": "https://concierge-demo.elliotpbrady.workers.dev", "opening": ["Hi, this is Hannah at Cromer House Dental in Liverpool.", "I can help with treatments, registering as a patient, or booking you in. What were you after?"], "quick_replies": ["Do you take new patients?", "How much is Invisalign?", "Do you do implants?", "What are your hours?"]};
 const chat = document.getElementById('chat'), qrBox = document.getElementById('qr'),
-      input = document.getElementById('msg'), statusEl = document.getElementById('status');
+      input = document.getElementById('msg'), sendBtn = document.getElementById('send'),
+      statusEl = document.getElementById('status');
+const history = [];          // [{from:'them'|'biz', text}] — real turns only (not the opening)
+let busy = false;            // lock so one message resolves before the next
+
 function now(){const d=new Date();let h=d.getHours(),m=d.getMinutes();const ap=h>=12?'pm':'am';
   h=h%12||12;return h+':'+(m<10?'0'+m:m)+' '+ap;}
 function scroll(){chat.scrollTop=chat.scrollHeight;}
@@ -98,52 +105,63 @@ function addBubble(text, who){
   row.appendChild(b);chat.appendChild(row);scroll();
 }
 function showTyping(){statusEl.textContent='typing…';
+  if(document.getElementById('typingrow'))return;
   const row=document.createElement('div');row.className='row in';row.id='typingrow';
   const b=document.createElement('div');b.className='bubble';
   b.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
   row.appendChild(b);chat.appendChild(row);scroll();}
 function hideTyping(){const t=document.getElementById('typingrow');if(t)t.remove();statusEl.textContent='online';}
-function botSay(text, after){
-  showTyping();
-  const delay=Math.min(2200,650+text.length*22);
-  setTimeout(()=>{hideTyping();addBubble(text,'in');if(after)after();},delay);
-}
+function wait(ms){return new Promise(r=>setTimeout(r,ms));}
 function renderQR(list){
   qrBox.innerHTML='';(list||[]).forEach(q=>{const btn=document.createElement('button');
     btn.textContent=q;btn.onclick=()=>handle(q);qrBox.appendChild(btn);});
 }
-// --- intent matching (keyword scoring + synonyms) ---
-function score(text, patterns){
-  const t=text.toLowerCase();let s=0;
-  patterns.forEach(p=>{if(t.includes(p.toLowerCase()))s+=p.split(' ').length;});
-  return s;
+// Show a bot bubble with a realistic typing pause first.
+async function botSay(text){
+  showTyping();
+  await wait(Math.min(2200,600+text.length*22));
+  hideTyping();
+  addBubble(text,'in');
+  history.push({from:'biz',text});
 }
-function match(text){
-  let best=null,bestScore=0;
-  (BRAIN.intents||[]).forEach(it=>{const sc=score(text,it.patterns||[]);
-    if(sc>bestScore){bestScore=sc;best=it;}});
-  return bestScore>0?best:null;
-}
-function handle(text){
-  text=text.trim();if(!text)return;
+
+async function handle(text){
+  text=(text||'').trim();
+  if(!text||busy)return;
+  busy=true;input.disabled=true;
   addBubble(text,'out');input.value='';qrBox.innerHTML='';
-  const it=match(text);
-  if(it){
-    const replies=Array.isArray(it.reply)?it.reply:[it.reply];
-    let i=0;const next=()=>{if(i<replies.length){const r=replies[i++];
-      botSay(r, i<replies.length?next:()=>renderQR(it.quick_replies||BRAIN.quick_replies));};};
-    next();
-  } else {
-    botSay(BRAIN.fallback, ()=>renderQR(BRAIN.quick_replies));
+  const sent=history.slice();          // prior turns only — current msg goes in `message`
+  history.push({from:'them',text});
+  showTyping();
+  let bubbles=null, capped=false;
+  try{
+    const res=await fetch(CFG.worker,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({leadSlug:CFG.slug,message:text,history:sent})
+    });
+    const data=await res.json();
+    if(data&&Array.isArray(data.bubbles)){bubbles=data.bubbles;capped=!!data.capped;}
+  }catch(e){/* network — fall through to graceful line */}
+  hideTyping();
+  if(!bubbles||!bubbles.length){
+    bubbles=["Sorry, I dropped off there for a sec — could you say that again?"];
   }
+  for(let i=0;i<bubbles.length;i++){
+    if(i>0)await wait(350);
+    await botSay(bubbles[i]);
+  }
+  busy=false;input.disabled=false;input.focus();
+  if(!capped)renderQR(CFG.quick_replies);   // keep the prompts handy; hide once the demo caps out
 }
-document.getElementById('send').onclick=()=>handle(input.value);
+
+sendBtn.onclick=()=>handle(input.value);
 input.addEventListener('keydown',e=>{if(e.key==='Enter')handle(input.value);});
-// --- boot: opening messages, then quick replies ---
-(function boot(){
-  let i=0;const opens=BRAIN.opening||[];
-  const step=()=>{if(i<opens.length){botSay(opens[i++],step);}else{renderQR(BRAIN.quick_replies);}};
-  setTimeout(step,500);
+// --- boot: opening messages render locally (instant), then quick replies ---
+(async function boot(){
+  await wait(500);
+  for(const line of (CFG.opening||[])){await botSay(line);}
+  history.length=0;                 // opening is cosmetic; the Worker re-adds it as context
+  renderQR(CFG.quick_replies);
 })();
 </script>
 </body>

@@ -84,9 +84,16 @@
   <div class="ribbon"><span>Live demo · powered by <a href="#">Concierge</a></span></div>
 </div>
 <script>
-const BRAIN = {"opening": ["Hi there 👋 You're through to North Laine Hair Company on Gardner Street — Faye here.", "After colour, a cut, or curly styling? Happy to help."], "quick_replies": ["How much is balayage?", "Do you cut curly hair?", "Are you open Saturday?", "Where are you?"], "intents": [{"id": "balayage", "patterns": ["balayage", "ombre", "lived in", "sun kissed", "blonde", "creative colour"], "reply": ["Lovely — balayage is one of the things we're known for, full head is £125 and grows out beautifully soft.", "As it's colour we do need a skin test before, so I'd book you a quick colour consult first to get the tone exactly right. Shall I sort that?"], "quick_replies": ["Book a colour consult", "How long does it take?", "What days are free?"]}, {"id": "colour_correction", "patterns": ["colour correction", "color correction", "fix my colour", "gone wrong", "brassy", "banding"], "reply": "We do — colour correction is a real strength of ours alongside creative colour. It always starts with a proper consult so we can see your hair and plan it safely. Want me to book you in for that?", "quick_replies": ["Book a consult", "Bring a photo?", "What days are free?"]}, {"id": "curly", "patterns": ["curly", "coily", "curls", "afro", "natural hair", "texture"], "reply": "Yes — curly and coily hair cutting is one of our specialities, we cut to work with your texture rather than against it 🌀 Want me to book you in with someone who does a lot of curly work?", "quick_replies": ["Book a curly cut", "Dry or wet cut?", "What days are free?"]}, {"id": "cut", "patterns": ["cut", "trim", "blow dry", "restyle", "shag", "wolf", "mullet", "bob", "fade", "gents"], "reply": "A cut & blow dry is from £64, and we love a creative cut — shags, wolfs, mullets, bobs, plus clipper cuts and skin fades. What were you thinking, and is there a day that suits you?", "quick_replies": ["Book a cut & blow dry", "This weekend?", "I want a restyle"]}, {"id": "price", "patterns": ["price", "cost", "how much", "prices", "quote"], "reply": "Happy to help — cut & blow dry from £64 and a full-head balayage at £125. The exact price depends on your hair length and what you're after, so tell me the service and I'll confirm it for you.", "quick_replies": ["Balayage price", "Cut price", "Curly cut price"]}, {"id": "hours", "patterns": ["open", "hours", "saturday", "sunday", "monday", "when", "days"], "reply": "We're open Mon–Fri 10 till 6 and Saturdays 9 till 5 — Sundays we're closed. Saturdays go quickest, want me to hold you one?", "quick_replies": ["Hold a Saturday", "A weekday's fine", "What's next available?"]}, {"id": "location", "patterns": ["where", "address", "gardner", "north laine", "parking", "find you", "based"], "reply": "We're at 38 Gardner Street, right in the North Laine, Brighton BN1 1UN. Want me to get you booked while you're here?", "quick_replies": ["Book me in", "What are your prices?"]}], "fallback": "Good question — let me check that with Kate and the team and come straight back so you get the proper answer 😊 In the meantime, shall I pencil you in?"};
+// Page config: which lead this is + where the live brain lives. The opening
+// lines + quick replies render instantly client-side (snappy, no latency); every
+// real reply is generated live by the Concierge Worker (OpenAI, key server-side).
+const CFG = {"slug": "north-laine-hair-company-brighton", "worker": "https://concierge-demo.elliotpbrady.workers.dev", "opening": ["Hi there 👋 You're through to North Laine Hair Company on Gardner Street — Faye here.", "After colour, a cut, or curly styling? Happy to help."], "quick_replies": ["How much is balayage?", "Do you cut curly hair?", "Are you open Saturday?", "Where are you?"]};
 const chat = document.getElementById('chat'), qrBox = document.getElementById('qr'),
-      input = document.getElementById('msg'), statusEl = document.getElementById('status');
+      input = document.getElementById('msg'), sendBtn = document.getElementById('send'),
+      statusEl = document.getElementById('status');
+const history = [];          // [{from:'them'|'biz', text}] — real turns only (not the opening)
+let busy = false;            // lock so one message resolves before the next
+
 function now(){const d=new Date();let h=d.getHours(),m=d.getMinutes();const ap=h>=12?'pm':'am';
   h=h%12||12;return h+':'+(m<10?'0'+m:m)+' '+ap;}
 function scroll(){chat.scrollTop=chat.scrollHeight;}
@@ -98,52 +105,63 @@ function addBubble(text, who){
   row.appendChild(b);chat.appendChild(row);scroll();
 }
 function showTyping(){statusEl.textContent='typing…';
+  if(document.getElementById('typingrow'))return;
   const row=document.createElement('div');row.className='row in';row.id='typingrow';
   const b=document.createElement('div');b.className='bubble';
   b.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
   row.appendChild(b);chat.appendChild(row);scroll();}
 function hideTyping(){const t=document.getElementById('typingrow');if(t)t.remove();statusEl.textContent='online';}
-function botSay(text, after){
-  showTyping();
-  const delay=Math.min(2200,650+text.length*22);
-  setTimeout(()=>{hideTyping();addBubble(text,'in');if(after)after();},delay);
-}
+function wait(ms){return new Promise(r=>setTimeout(r,ms));}
 function renderQR(list){
   qrBox.innerHTML='';(list||[]).forEach(q=>{const btn=document.createElement('button');
     btn.textContent=q;btn.onclick=()=>handle(q);qrBox.appendChild(btn);});
 }
-// --- intent matching (keyword scoring + synonyms) ---
-function score(text, patterns){
-  const t=text.toLowerCase();let s=0;
-  patterns.forEach(p=>{if(t.includes(p.toLowerCase()))s+=p.split(' ').length;});
-  return s;
+// Show a bot bubble with a realistic typing pause first.
+async function botSay(text){
+  showTyping();
+  await wait(Math.min(2200,600+text.length*22));
+  hideTyping();
+  addBubble(text,'in');
+  history.push({from:'biz',text});
 }
-function match(text){
-  let best=null,bestScore=0;
-  (BRAIN.intents||[]).forEach(it=>{const sc=score(text,it.patterns||[]);
-    if(sc>bestScore){bestScore=sc;best=it;}});
-  return bestScore>0?best:null;
-}
-function handle(text){
-  text=text.trim();if(!text)return;
+
+async function handle(text){
+  text=(text||'').trim();
+  if(!text||busy)return;
+  busy=true;input.disabled=true;
   addBubble(text,'out');input.value='';qrBox.innerHTML='';
-  const it=match(text);
-  if(it){
-    const replies=Array.isArray(it.reply)?it.reply:[it.reply];
-    let i=0;const next=()=>{if(i<replies.length){const r=replies[i++];
-      botSay(r, i<replies.length?next:()=>renderQR(it.quick_replies||BRAIN.quick_replies));};};
-    next();
-  } else {
-    botSay(BRAIN.fallback, ()=>renderQR(BRAIN.quick_replies));
+  const sent=history.slice();          // prior turns only — current msg goes in `message`
+  history.push({from:'them',text});
+  showTyping();
+  let bubbles=null, capped=false;
+  try{
+    const res=await fetch(CFG.worker,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({leadSlug:CFG.slug,message:text,history:sent})
+    });
+    const data=await res.json();
+    if(data&&Array.isArray(data.bubbles)){bubbles=data.bubbles;capped=!!data.capped;}
+  }catch(e){/* network — fall through to graceful line */}
+  hideTyping();
+  if(!bubbles||!bubbles.length){
+    bubbles=["Sorry, I dropped off there for a sec — could you say that again?"];
   }
+  for(let i=0;i<bubbles.length;i++){
+    if(i>0)await wait(350);
+    await botSay(bubbles[i]);
+  }
+  busy=false;input.disabled=false;input.focus();
+  if(!capped)renderQR(CFG.quick_replies);   // keep the prompts handy; hide once the demo caps out
 }
-document.getElementById('send').onclick=()=>handle(input.value);
+
+sendBtn.onclick=()=>handle(input.value);
 input.addEventListener('keydown',e=>{if(e.key==='Enter')handle(input.value);});
-// --- boot: opening messages, then quick replies ---
-(function boot(){
-  let i=0;const opens=BRAIN.opening||[];
-  const step=()=>{if(i<opens.length){botSay(opens[i++],step);}else{renderQR(BRAIN.quick_replies);}};
-  setTimeout(step,500);
+// --- boot: opening messages render locally (instant), then quick replies ---
+(async function boot(){
+  await wait(500);
+  for(const line of (CFG.opening||[])){await botSay(line);}
+  history.length=0;                 // opening is cosmetic; the Worker re-adds it as context
+  renderQR(CFG.quick_replies);
 })();
 </script>
 </body>

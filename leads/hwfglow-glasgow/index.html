@@ -84,9 +84,16 @@
   <div class="ribbon"><span>Live demo · powered by <a href="#">Concierge</a></span></div>
 </div>
 <script>
-const BRAIN = {"opening": ["Hi, you're through to Caitlin at HWFGlow in Glasgow.", "Happy to help with our facials and skin treatments or booking you a consultation with Madeleinea."], "quick_replies": ["How much is a facial?", "Do I need a consultation?", "Do you do microneedling?", "Where are you based?"], "intents": [{"id": "facial", "patterns": ["facial", "facials", "alumier", "bespoke facial", "glow", "treatment"], "reply": ["Our AlumierMD bespoke facial is £70 for around 45 minutes and it's tailored to your skin on the day rather than one-size-fits-all.", "If your skin's got a particular concern, the skin consultation & treatment at £90 digs a bit deeper. Want me to book you in?"], "quick_replies": ["Book a facial", "Do I need a consultation?"]}, {"id": "microneedling", "patterns": ["microneedling", "micro needling", "needling", "skin boosters", "radiofrequency", "rf"], "reply": "We do micro-needling with skin boosters at £155 for about an hour, lovely for texture and overall skin quality, plus radiofrequency microneedling. Madeleinea will check it suits your skin at consultation first. Shall I get one booked?", "quick_replies": ["Book a consultation", "How much is a facial?"]}, {"id": "consultation", "patterns": ["consultation", "consult", "do i need", "first time", "assessment", "skin advice"], "reply": "Yeah, the skin consultation & treatment (£90, 1 hour) is the best first step, Madeleinea reads your skin properly and recommends what'll actually work for you rather than guessing. Want me to find you a slot?", "quick_replies": ["Book a consultation", "Do you do peels?"]}, {"id": "peels", "patterns": ["peel", "peels", "chemical peel", "exfoliate", "pigmentation", "texture"], "reply": "We do chemical peels for things like texture, dullness and pigmentation. Which peel and strength suits you is something Madeleinea sets after looking at your skin, so a consultation's the right starting point. Shall I book that?", "quick_replies": ["Book a consultation", "Tell me about facials"]}, {"id": "price", "patterns": ["price", "cost", "how much", "prices", "pricing"], "reply": "Course. The AlumierMD bespoke facial is £70, the skin consultation & treatment is £90 and micro-needling with skin boosters is £155. What's right for your skin gets confirmed with Madeleinea, so I'll always check at booking. What were you after?", "quick_replies": ["Book a facial", "Book a consultation"]}, {"id": "skincare_plans", "patterns": ["skincare", "products", "home plan", "routine", "online plan", "regime"], "reply": "We also do online home skincare plans, so you get a proper routine to keep results going between treatments. Madeleinea builds it around your skin. Want me to mention that when I book you a consultation?", "quick_replies": ["Book a consultation", "How much is a facial?"]}, {"id": "location_booking", "patterns": ["where", "address", "based", "berkley", "glasgow", "open", "hours", "when", "available", "book"], "reply": "We're at 48 Berkley Street in Glasgow. Bookings are by appointment, so if you tell me your name and roughly when suits I'll check what Madeleinea has free and confirm. When works for you?", "quick_replies": ["Mornings", "Afternoons"]}], "fallback": "Good question, let me check that with Madeleinea and come straight back to you. In the meantime, the best first step is usually a skin consultation, shall I hold you a slot?"};
+// Page config: which lead this is + where the live brain lives. The opening
+// lines + quick replies render instantly client-side (snappy, no latency); every
+// real reply is generated live by the Concierge Worker (OpenAI, key server-side).
+const CFG = {"slug": "hwfglow-glasgow", "worker": "https://concierge-demo.elliotpbrady.workers.dev", "opening": ["Hi, you're through to Caitlin at HWFGlow in Glasgow.", "Happy to help with our facials and skin treatments or booking you a consultation with Madeleinea."], "quick_replies": ["How much is a facial?", "Do I need a consultation?", "Do you do microneedling?", "Where are you based?"]};
 const chat = document.getElementById('chat'), qrBox = document.getElementById('qr'),
-      input = document.getElementById('msg'), statusEl = document.getElementById('status');
+      input = document.getElementById('msg'), sendBtn = document.getElementById('send'),
+      statusEl = document.getElementById('status');
+const history = [];          // [{from:'them'|'biz', text}] — real turns only (not the opening)
+let busy = false;            // lock so one message resolves before the next
+
 function now(){const d=new Date();let h=d.getHours(),m=d.getMinutes();const ap=h>=12?'pm':'am';
   h=h%12||12;return h+':'+(m<10?'0'+m:m)+' '+ap;}
 function scroll(){chat.scrollTop=chat.scrollHeight;}
@@ -98,52 +105,63 @@ function addBubble(text, who){
   row.appendChild(b);chat.appendChild(row);scroll();
 }
 function showTyping(){statusEl.textContent='typing…';
+  if(document.getElementById('typingrow'))return;
   const row=document.createElement('div');row.className='row in';row.id='typingrow';
   const b=document.createElement('div');b.className='bubble';
   b.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
   row.appendChild(b);chat.appendChild(row);scroll();}
 function hideTyping(){const t=document.getElementById('typingrow');if(t)t.remove();statusEl.textContent='online';}
-function botSay(text, after){
-  showTyping();
-  const delay=Math.min(2200,650+text.length*22);
-  setTimeout(()=>{hideTyping();addBubble(text,'in');if(after)after();},delay);
-}
+function wait(ms){return new Promise(r=>setTimeout(r,ms));}
 function renderQR(list){
   qrBox.innerHTML='';(list||[]).forEach(q=>{const btn=document.createElement('button');
     btn.textContent=q;btn.onclick=()=>handle(q);qrBox.appendChild(btn);});
 }
-// --- intent matching (keyword scoring + synonyms) ---
-function score(text, patterns){
-  const t=text.toLowerCase();let s=0;
-  patterns.forEach(p=>{if(t.includes(p.toLowerCase()))s+=p.split(' ').length;});
-  return s;
+// Show a bot bubble with a realistic typing pause first.
+async function botSay(text){
+  showTyping();
+  await wait(Math.min(2200,600+text.length*22));
+  hideTyping();
+  addBubble(text,'in');
+  history.push({from:'biz',text});
 }
-function match(text){
-  let best=null,bestScore=0;
-  (BRAIN.intents||[]).forEach(it=>{const sc=score(text,it.patterns||[]);
-    if(sc>bestScore){bestScore=sc;best=it;}});
-  return bestScore>0?best:null;
-}
-function handle(text){
-  text=text.trim();if(!text)return;
+
+async function handle(text){
+  text=(text||'').trim();
+  if(!text||busy)return;
+  busy=true;input.disabled=true;
   addBubble(text,'out');input.value='';qrBox.innerHTML='';
-  const it=match(text);
-  if(it){
-    const replies=Array.isArray(it.reply)?it.reply:[it.reply];
-    let i=0;const next=()=>{if(i<replies.length){const r=replies[i++];
-      botSay(r, i<replies.length?next:()=>renderQR(it.quick_replies||BRAIN.quick_replies));};};
-    next();
-  } else {
-    botSay(BRAIN.fallback, ()=>renderQR(BRAIN.quick_replies));
+  const sent=history.slice();          // prior turns only — current msg goes in `message`
+  history.push({from:'them',text});
+  showTyping();
+  let bubbles=null, capped=false;
+  try{
+    const res=await fetch(CFG.worker,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({leadSlug:CFG.slug,message:text,history:sent})
+    });
+    const data=await res.json();
+    if(data&&Array.isArray(data.bubbles)){bubbles=data.bubbles;capped=!!data.capped;}
+  }catch(e){/* network — fall through to graceful line */}
+  hideTyping();
+  if(!bubbles||!bubbles.length){
+    bubbles=["Sorry, I dropped off there for a sec — could you say that again?"];
   }
+  for(let i=0;i<bubbles.length;i++){
+    if(i>0)await wait(350);
+    await botSay(bubbles[i]);
+  }
+  busy=false;input.disabled=false;input.focus();
+  if(!capped)renderQR(CFG.quick_replies);   // keep the prompts handy; hide once the demo caps out
 }
-document.getElementById('send').onclick=()=>handle(input.value);
+
+sendBtn.onclick=()=>handle(input.value);
 input.addEventListener('keydown',e=>{if(e.key==='Enter')handle(input.value);});
-// --- boot: opening messages, then quick replies ---
-(function boot(){
-  let i=0;const opens=BRAIN.opening||[];
-  const step=()=>{if(i<opens.length){botSay(opens[i++],step);}else{renderQR(BRAIN.quick_replies);}};
-  setTimeout(step,500);
+// --- boot: opening messages render locally (instant), then quick replies ---
+(async function boot(){
+  await wait(500);
+  for(const line of (CFG.opening||[])){await botSay(line);}
+  history.length=0;                 // opening is cosmetic; the Worker re-adds it as context
+  renderQR(CFG.quick_replies);
 })();
 </script>
 </body>

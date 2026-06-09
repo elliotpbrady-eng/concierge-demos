@@ -84,9 +84,16 @@
   <div class="ribbon"><span>Live demo · powered by <a href="#">Concierge</a></span></div>
 </div>
 <script>
-const BRAIN = {"opening": ["Hi, you're through to Rebecca at Beautox Beauty in Newcastle.", "I can help with any questions about treatments or getting you booked in with Diane for a consultation."], "quick_replies": ["How much is Botox?", "Do I need a consultation?", "Where are you based?", "Who does the treatments?"], "intents": [{"id": "botox", "patterns": ["botox", "anti wrinkle", "anti-wrinkle", "azzalure", "frown lines", "forehead", "crows feet", "wrinkles"], "reply": "Our anti-wrinkle injections soften lines like the forehead, frown and crow's feet, and Diane also does more advanced work around the under-eye and lower face. She's an independent nurse prescriber, so it always starts with a consultation to check what'll suit you. Shall I get one in the diary?", "quick_replies": ["Book a consultation", "Tell me about fillers"]}, {"id": "fillers", "patterns": ["filler", "fillers", "dermal filler", "lip filler", "cheeks", "volume"], "reply": "We do dermal fillers to restore volume and balance, often alongside anti-wrinkle treatment where it fits. Everyone's face is different, so Diane would map out what actually works for you at a consultation first. Want me to arrange that?", "quick_replies": ["Book a consultation", "Do I need a consultation?"]}, {"id": "skin", "patterns": ["peel", "chemical peel", "skin", "facial", "texture", "complexion"], "reply": "We offer chemical peels and skin treatments alongside the injectables, lovely for freshening up tone and texture. Diane would talk through what's right for your skin at a consultation rather than me guessing here. Shall I pop you in for one?", "quick_replies": ["Book a consultation", "What else do you do?"]}, {"id": "consultation", "patterns": ["consultation", "consult", "do i need", "first appointment", "assessment", "free consultation"], "reply": ["Yes, every treatment starts with a consultation, and your first one with Diane is free.", "She'll assess your face, go through the options properly and there's time to think it over before anything's booked, so you're never rushed. Shall I find you a slot?"], "quick_replies": ["Book a consultation", "Where are you based?"]}, {"id": "price", "patterns": ["price", "cost", "how much", "fee", "pricing", "expensive", "quote"], "reply": "I can't pin a price on it over chat, I'd hate to quote you something that isn't actually right for you. What's needed and the cost are set by Diane once she's seen you at the consultation. That first consult is free though, so it's an easy place to start, want me to book it?", "quick_replies": ["Book a consultation", "Is the consultation free?"]}, {"id": "safety", "patterns": ["safe", "safety", "qualified", "nurse", "side effects", "risk", "who does"], "reply": "Totally fair to check. All treatments are carried out by Diane herself, a registered nurse and independent prescriber with years of experience, and nothing goes ahead without a consultation and time to reflect first. She'll talk you through anything to be aware of personally. Would a consultation help put your mind at ease?", "quick_replies": ["Book a consultation", "Who is Diane?"]}, {"id": "location", "patterns": ["where", "address", "location", "based", "saville", "parking", "city centre"], "reply": "We're at 5 Saville Place, right in Newcastle city centre near Northumberland Street, just upstairs from Nicholas Mark Hairdressing. Easy to reach on foot from the centre. Shall I book you a consultation while you're thinking about it?", "quick_replies": ["Book a consultation", "How do I book?"]}, {"id": "booking", "patterns": ["book", "appointment", "available", "when", "slot", "diary"], "reply": "Lovely, I can get you booked in for a consultation with Diane. Could you let me know your name and roughly when suits you, and I'll check the diary?", "quick_replies": ["Mornings work", "Afternoons work"]}], "fallback": "That's a good one for Diane to answer properly, let me check with her and come back to you. In the meantime the best next step is usually a quick consultation, shall I get one in the diary for you?"};
+// Page config: which lead this is + where the live brain lives. The opening
+// lines + quick replies render instantly client-side (snappy, no latency); every
+// real reply is generated live by the Concierge Worker (OpenAI, key server-side).
+const CFG = {"slug": "beautox-beauty-newcastle", "worker": "https://concierge-demo.elliotpbrady.workers.dev", "opening": ["Hi, you're through to Rebecca at Beautox Beauty in Newcastle.", "I can help with any questions about treatments or getting you booked in with Diane for a consultation."], "quick_replies": ["How much is Botox?", "Do I need a consultation?", "Where are you based?", "Who does the treatments?"]};
 const chat = document.getElementById('chat'), qrBox = document.getElementById('qr'),
-      input = document.getElementById('msg'), statusEl = document.getElementById('status');
+      input = document.getElementById('msg'), sendBtn = document.getElementById('send'),
+      statusEl = document.getElementById('status');
+const history = [];          // [{from:'them'|'biz', text}] — real turns only (not the opening)
+let busy = false;            // lock so one message resolves before the next
+
 function now(){const d=new Date();let h=d.getHours(),m=d.getMinutes();const ap=h>=12?'pm':'am';
   h=h%12||12;return h+':'+(m<10?'0'+m:m)+' '+ap;}
 function scroll(){chat.scrollTop=chat.scrollHeight;}
@@ -98,52 +105,63 @@ function addBubble(text, who){
   row.appendChild(b);chat.appendChild(row);scroll();
 }
 function showTyping(){statusEl.textContent='typing…';
+  if(document.getElementById('typingrow'))return;
   const row=document.createElement('div');row.className='row in';row.id='typingrow';
   const b=document.createElement('div');b.className='bubble';
   b.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
   row.appendChild(b);chat.appendChild(row);scroll();}
 function hideTyping(){const t=document.getElementById('typingrow');if(t)t.remove();statusEl.textContent='online';}
-function botSay(text, after){
-  showTyping();
-  const delay=Math.min(2200,650+text.length*22);
-  setTimeout(()=>{hideTyping();addBubble(text,'in');if(after)after();},delay);
-}
+function wait(ms){return new Promise(r=>setTimeout(r,ms));}
 function renderQR(list){
   qrBox.innerHTML='';(list||[]).forEach(q=>{const btn=document.createElement('button');
     btn.textContent=q;btn.onclick=()=>handle(q);qrBox.appendChild(btn);});
 }
-// --- intent matching (keyword scoring + synonyms) ---
-function score(text, patterns){
-  const t=text.toLowerCase();let s=0;
-  patterns.forEach(p=>{if(t.includes(p.toLowerCase()))s+=p.split(' ').length;});
-  return s;
+// Show a bot bubble with a realistic typing pause first.
+async function botSay(text){
+  showTyping();
+  await wait(Math.min(2200,600+text.length*22));
+  hideTyping();
+  addBubble(text,'in');
+  history.push({from:'biz',text});
 }
-function match(text){
-  let best=null,bestScore=0;
-  (BRAIN.intents||[]).forEach(it=>{const sc=score(text,it.patterns||[]);
-    if(sc>bestScore){bestScore=sc;best=it;}});
-  return bestScore>0?best:null;
-}
-function handle(text){
-  text=text.trim();if(!text)return;
+
+async function handle(text){
+  text=(text||'').trim();
+  if(!text||busy)return;
+  busy=true;input.disabled=true;
   addBubble(text,'out');input.value='';qrBox.innerHTML='';
-  const it=match(text);
-  if(it){
-    const replies=Array.isArray(it.reply)?it.reply:[it.reply];
-    let i=0;const next=()=>{if(i<replies.length){const r=replies[i++];
-      botSay(r, i<replies.length?next:()=>renderQR(it.quick_replies||BRAIN.quick_replies));};};
-    next();
-  } else {
-    botSay(BRAIN.fallback, ()=>renderQR(BRAIN.quick_replies));
+  const sent=history.slice();          // prior turns only — current msg goes in `message`
+  history.push({from:'them',text});
+  showTyping();
+  let bubbles=null, capped=false;
+  try{
+    const res=await fetch(CFG.worker,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({leadSlug:CFG.slug,message:text,history:sent})
+    });
+    const data=await res.json();
+    if(data&&Array.isArray(data.bubbles)){bubbles=data.bubbles;capped=!!data.capped;}
+  }catch(e){/* network — fall through to graceful line */}
+  hideTyping();
+  if(!bubbles||!bubbles.length){
+    bubbles=["Sorry, I dropped off there for a sec — could you say that again?"];
   }
+  for(let i=0;i<bubbles.length;i++){
+    if(i>0)await wait(350);
+    await botSay(bubbles[i]);
+  }
+  busy=false;input.disabled=false;input.focus();
+  if(!capped)renderQR(CFG.quick_replies);   // keep the prompts handy; hide once the demo caps out
 }
-document.getElementById('send').onclick=()=>handle(input.value);
+
+sendBtn.onclick=()=>handle(input.value);
 input.addEventListener('keydown',e=>{if(e.key==='Enter')handle(input.value);});
-// --- boot: opening messages, then quick replies ---
-(function boot(){
-  let i=0;const opens=BRAIN.opening||[];
-  const step=()=>{if(i<opens.length){botSay(opens[i++],step);}else{renderQR(BRAIN.quick_replies);}};
-  setTimeout(step,500);
+// --- boot: opening messages render locally (instant), then quick replies ---
+(async function boot(){
+  await wait(500);
+  for(const line of (CFG.opening||[])){await botSay(line);}
+  history.length=0;                 // opening is cosmetic; the Worker re-adds it as context
+  renderQR(CFG.quick_replies);
 })();
 </script>
 </body>

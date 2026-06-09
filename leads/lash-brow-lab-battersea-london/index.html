@@ -84,9 +84,16 @@
   <div class="ribbon"><span>Live demo · powered by <a href="#">Concierge</a></span></div>
 </div>
 <script>
-const BRAIN = {"opening": ["Hi, you're through to Roxy at lash+browlab on Lavender Hill.", "Happy to help with lashes, brows, facials or microneedling, or to get you booked in."], "quick_replies": ["How much for a full set of lashes?", "Do you do brow lamination?", "Any space Saturday?", "Where are you based?"], "intents": [{"id": "lash_extensions", "patterns": ["lash", "lashes", "full set", "classic", "hybrid", "russian", "volume", "mega", "wispy", "how much for lashes"], "reply": ["Depends on the look you want. A classic full set is £135, hybrid £145, Russian volume £155 and our mega volume wispy set is £165.", "If you're not sure which suits you, the team will help you pick on the day. Want me to get you booked in?"], "quick_replies": ["Book a full set", "What's the difference?"]}, {"id": "lash_infills", "patterns": ["infill", "infills", "top up", "fill", "how long do lashes last", "maintenance"], "reply": "To keep a set looking full you'd come back for an infill, usually every 2-3 weeks. They run from £65 for an hour up to around £90 for the fuller volume sets. Want me to book your infill in?", "quick_replies": ["Book an infill", "Book a full set"]}, {"id": "lash_lift", "patterns": ["lash lift", "lift and tint", "lvl", "natural lashes", "no extensions"], "reply": "If you'd rather keep your own lashes, our lash lift and tint is £99, it lifts and darkens your natural lashes for a lovely open-eyed look with no upkeep. Shall I pop you in?", "quick_replies": ["Book a lash lift", "How much for a full set?"]}, {"id": "brows", "patterns": ["brow", "brows", "lamination", "hd brows", "eyebrow", "shape"], "reply": "On brows we do HD Brows at £45, and brow lamination at £62 for that brushed-up, fuller, glossy look that lasts a few weeks. Which were you after?", "quick_replies": ["Book brow lamination", "Book HD Brows"]}, {"id": "facials", "patterns": ["facial", "facials", "deep clean", "sculpt", "hydrating", "skin", "glow"], "reply": "We've two facials, the Luxury Deep Clean & Sculpt at £80 and the Hydrating Sculpt at £70, both around 45 minutes to an hour. Lovely for a reset or before an event. Shall I find you a slot?", "quick_replies": ["Book a facial", "Which facial?"]}, {"id": "microneedling", "patterns": ["microneedling", "micro needling", "needling", "exosomes", "skin texture", "collagen"], "reply": "We do face and neck microneedling from £120, with exosome and advanced options too, and a 4-session bundle if you want a proper course. The team will check it suits your skin first. Want me to book you a consultation?", "quick_replies": ["Book microneedling", "Is it right for me?"]}, {"id": "price", "patterns": ["price", "prices", "cost", "how much", "pricing"], "reply": "Course. Lashes: classic £135, hybrid £145, Russian volume £155, mega volume £165, infills £65-£90. Lash lift £99. Brows: HD £45, lamination £62. Facials £70-£80, microneedling from £120. What were you after and I'll get you booked?", "quick_replies": ["Book lashes", "Book brows"]}, {"id": "location_hours", "patterns": ["where", "address", "based", "battersea", "lavender hill", "clapham", "open", "hours", "saturday", "parking"], "reply": "We're at 34 Lavender Hill in Battersea, SW11 5RL, just up from Clapham Junction. We're open through the week with later Fridays till 8 and Saturdays 10-4. When suits you and I'll check the diary?", "quick_replies": ["Saturday", "A weekday evening"]}], "fallback": "Good question, let me just check that with the team and come straight back to you. In the meantime, shall I hold you a slot so you don't miss out?"};
+// Page config: which lead this is + where the live brain lives. The opening
+// lines + quick replies render instantly client-side (snappy, no latency); every
+// real reply is generated live by the Concierge Worker (OpenAI, key server-side).
+const CFG = {"slug": "lash-brow-lab-battersea-london", "worker": "https://concierge-demo.elliotpbrady.workers.dev", "opening": ["Hi, you're through to Roxy at lash+browlab on Lavender Hill.", "Happy to help with lashes, brows, facials or microneedling, or to get you booked in."], "quick_replies": ["How much for a full set of lashes?", "Do you do brow lamination?", "Any space Saturday?", "Where are you based?"]};
 const chat = document.getElementById('chat'), qrBox = document.getElementById('qr'),
-      input = document.getElementById('msg'), statusEl = document.getElementById('status');
+      input = document.getElementById('msg'), sendBtn = document.getElementById('send'),
+      statusEl = document.getElementById('status');
+const history = [];          // [{from:'them'|'biz', text}] — real turns only (not the opening)
+let busy = false;            // lock so one message resolves before the next
+
 function now(){const d=new Date();let h=d.getHours(),m=d.getMinutes();const ap=h>=12?'pm':'am';
   h=h%12||12;return h+':'+(m<10?'0'+m:m)+' '+ap;}
 function scroll(){chat.scrollTop=chat.scrollHeight;}
@@ -98,52 +105,63 @@ function addBubble(text, who){
   row.appendChild(b);chat.appendChild(row);scroll();
 }
 function showTyping(){statusEl.textContent='typing…';
+  if(document.getElementById('typingrow'))return;
   const row=document.createElement('div');row.className='row in';row.id='typingrow';
   const b=document.createElement('div');b.className='bubble';
   b.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
   row.appendChild(b);chat.appendChild(row);scroll();}
 function hideTyping(){const t=document.getElementById('typingrow');if(t)t.remove();statusEl.textContent='online';}
-function botSay(text, after){
-  showTyping();
-  const delay=Math.min(2200,650+text.length*22);
-  setTimeout(()=>{hideTyping();addBubble(text,'in');if(after)after();},delay);
-}
+function wait(ms){return new Promise(r=>setTimeout(r,ms));}
 function renderQR(list){
   qrBox.innerHTML='';(list||[]).forEach(q=>{const btn=document.createElement('button');
     btn.textContent=q;btn.onclick=()=>handle(q);qrBox.appendChild(btn);});
 }
-// --- intent matching (keyword scoring + synonyms) ---
-function score(text, patterns){
-  const t=text.toLowerCase();let s=0;
-  patterns.forEach(p=>{if(t.includes(p.toLowerCase()))s+=p.split(' ').length;});
-  return s;
+// Show a bot bubble with a realistic typing pause first.
+async function botSay(text){
+  showTyping();
+  await wait(Math.min(2200,600+text.length*22));
+  hideTyping();
+  addBubble(text,'in');
+  history.push({from:'biz',text});
 }
-function match(text){
-  let best=null,bestScore=0;
-  (BRAIN.intents||[]).forEach(it=>{const sc=score(text,it.patterns||[]);
-    if(sc>bestScore){bestScore=sc;best=it;}});
-  return bestScore>0?best:null;
-}
-function handle(text){
-  text=text.trim();if(!text)return;
+
+async function handle(text){
+  text=(text||'').trim();
+  if(!text||busy)return;
+  busy=true;input.disabled=true;
   addBubble(text,'out');input.value='';qrBox.innerHTML='';
-  const it=match(text);
-  if(it){
-    const replies=Array.isArray(it.reply)?it.reply:[it.reply];
-    let i=0;const next=()=>{if(i<replies.length){const r=replies[i++];
-      botSay(r, i<replies.length?next:()=>renderQR(it.quick_replies||BRAIN.quick_replies));};};
-    next();
-  } else {
-    botSay(BRAIN.fallback, ()=>renderQR(BRAIN.quick_replies));
+  const sent=history.slice();          // prior turns only — current msg goes in `message`
+  history.push({from:'them',text});
+  showTyping();
+  let bubbles=null, capped=false;
+  try{
+    const res=await fetch(CFG.worker,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({leadSlug:CFG.slug,message:text,history:sent})
+    });
+    const data=await res.json();
+    if(data&&Array.isArray(data.bubbles)){bubbles=data.bubbles;capped=!!data.capped;}
+  }catch(e){/* network — fall through to graceful line */}
+  hideTyping();
+  if(!bubbles||!bubbles.length){
+    bubbles=["Sorry, I dropped off there for a sec — could you say that again?"];
   }
+  for(let i=0;i<bubbles.length;i++){
+    if(i>0)await wait(350);
+    await botSay(bubbles[i]);
+  }
+  busy=false;input.disabled=false;input.focus();
+  if(!capped)renderQR(CFG.quick_replies);   // keep the prompts handy; hide once the demo caps out
 }
-document.getElementById('send').onclick=()=>handle(input.value);
+
+sendBtn.onclick=()=>handle(input.value);
 input.addEventListener('keydown',e=>{if(e.key==='Enter')handle(input.value);});
-// --- boot: opening messages, then quick replies ---
-(function boot(){
-  let i=0;const opens=BRAIN.opening||[];
-  const step=()=>{if(i<opens.length){botSay(opens[i++],step);}else{renderQR(BRAIN.quick_replies);}};
-  setTimeout(step,500);
+// --- boot: opening messages render locally (instant), then quick replies ---
+(async function boot(){
+  await wait(500);
+  for(const line of (CFG.opening||[])){await botSay(line);}
+  history.length=0;                 // opening is cosmetic; the Worker re-adds it as context
+  renderQR(CFG.quick_replies);
 })();
 </script>
 </body>

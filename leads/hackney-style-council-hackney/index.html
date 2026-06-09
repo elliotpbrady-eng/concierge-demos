@@ -84,9 +84,16 @@
   <div class="ribbon"><span>Live demo · powered by <a href="#">Concierge</a></span></div>
 </div>
 <script>
-const BRAIN = {"opening": ["Hey! 👋 You've reached Hackney Style Council on Mare Street — I'm Nina.", "After a cut, some colour, or just want to ask us something? Go for it."], "quick_replies": ["Book a cut & finish", "I'm thinking balayage", "Do you do colour correction?", "What are your hours?"], "intents": [{"id": "book", "patterns": ["book", "appointment", "slot", "this week", "availability", "fit me in"], "reply": "Yeah, course. What are you after — a cut & finish, colour, or a bit of both? And is there a day that works best for you?", "quick_replies": ["Cut & finish", "Colour", "Soonest you've got"]}, {"id": "balayage", "patterns": ["balayage", "lived in", "sun kissed", "hand painted", "natural colour"], "reply": ["Lovely — balayage is one we really enjoy 🌿 As it's hand-painted to suit your hair, we always start with a quick colour chat so we get the depth and price spot on.", "Want me to pop you in for that? No obligation."], "quick_replies": ["Book a colour chat", "How long does it take?", "Do I need a patch test?"]}, {"id": "colour_correction", "patterns": ["correction", "fix my colour", "gone wrong", "brassy", "patchy", "box dye"], "reply": "We do — colour correction is a bit of a speciality here. It varies a lot depending on what's currently on your hair, so the best move is a free consult so we can have a proper look first. Shall I book you one in?", "quick_replies": ["Book a consult", "Send a photo?", "How many sessions?"]}, {"id": "highlights", "patterns": ["highlights", "foils", "tint", "gloss", "toner", "bleach"], "reply": "Yep — parting, half-head and full-head highlights, plus tints, gloss and toners. Tell me roughly what you're going for and I'll sort the right booking, or set up a quick consult if you'd rather chat it through first.", "quick_replies": ["Half head", "Full head", "Just a gloss"]}, {"id": "price", "patterns": ["price", "cost", "how much", "prices", "quote"], "reply": "Colour especially depends on your hair length and condition, so I'd rather get you the right figure than guess — easiest is a quick free consult and we'll confirm the price there. What service were you thinking?", "quick_replies": ["Balayage", "Highlights", "Just a cut"]}, {"id": "hours", "patterns": ["open", "hours", "days", "saturday", "sunday", "when", "times"], "reply": "We're open Mon to Sat — Saturday's 8 till 5 and it goes quickest, so if that's your day, sooner's better. Want me to hold you something?", "quick_replies": ["Hold a Saturday", "A weekday suits me"]}, {"id": "location", "patterns": ["where", "address", "mare street", "based", "find you", "nearest"], "reply": "We're at 352 Mare Street in Hackney, E8 — easy hop from London Fields and Hackney Central. Want me to get you booked while you're here?", "quick_replies": ["Book me in", "What do you recommend?"]}, {"id": "inclusive", "patterns": ["gender", "non binary", "everyone", "all welcome", "neutral"], "reply": "Always — we're a gender-neutral salon, 'hairstyling for all' is genuinely the whole point of us 🙂 Whatever you're after, you're welcome here. Shall I book you in?", "quick_replies": ["Book me in", "Tell me about colour"]}], "fallback": "Good question — let me double-check that with the team so I give you the proper answer rather than a guess. While I do, shall I pencil you in?"};
+// Page config: which lead this is + where the live brain lives. The opening
+// lines + quick replies render instantly client-side (snappy, no latency); every
+// real reply is generated live by the Concierge Worker (OpenAI, key server-side).
+const CFG = {"slug": "hackney-style-council-hackney", "worker": "https://concierge-demo.elliotpbrady.workers.dev", "opening": ["Hey! 👋 You've reached Hackney Style Council on Mare Street — I'm Nina.", "After a cut, some colour, or just want to ask us something? Go for it."], "quick_replies": ["Book a cut & finish", "I'm thinking balayage", "Do you do colour correction?", "What are your hours?"]};
 const chat = document.getElementById('chat'), qrBox = document.getElementById('qr'),
-      input = document.getElementById('msg'), statusEl = document.getElementById('status');
+      input = document.getElementById('msg'), sendBtn = document.getElementById('send'),
+      statusEl = document.getElementById('status');
+const history = [];          // [{from:'them'|'biz', text}] — real turns only (not the opening)
+let busy = false;            // lock so one message resolves before the next
+
 function now(){const d=new Date();let h=d.getHours(),m=d.getMinutes();const ap=h>=12?'pm':'am';
   h=h%12||12;return h+':'+(m<10?'0'+m:m)+' '+ap;}
 function scroll(){chat.scrollTop=chat.scrollHeight;}
@@ -98,52 +105,63 @@ function addBubble(text, who){
   row.appendChild(b);chat.appendChild(row);scroll();
 }
 function showTyping(){statusEl.textContent='typing…';
+  if(document.getElementById('typingrow'))return;
   const row=document.createElement('div');row.className='row in';row.id='typingrow';
   const b=document.createElement('div');b.className='bubble';
   b.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
   row.appendChild(b);chat.appendChild(row);scroll();}
 function hideTyping(){const t=document.getElementById('typingrow');if(t)t.remove();statusEl.textContent='online';}
-function botSay(text, after){
-  showTyping();
-  const delay=Math.min(2200,650+text.length*22);
-  setTimeout(()=>{hideTyping();addBubble(text,'in');if(after)after();},delay);
-}
+function wait(ms){return new Promise(r=>setTimeout(r,ms));}
 function renderQR(list){
   qrBox.innerHTML='';(list||[]).forEach(q=>{const btn=document.createElement('button');
     btn.textContent=q;btn.onclick=()=>handle(q);qrBox.appendChild(btn);});
 }
-// --- intent matching (keyword scoring + synonyms) ---
-function score(text, patterns){
-  const t=text.toLowerCase();let s=0;
-  patterns.forEach(p=>{if(t.includes(p.toLowerCase()))s+=p.split(' ').length;});
-  return s;
+// Show a bot bubble with a realistic typing pause first.
+async function botSay(text){
+  showTyping();
+  await wait(Math.min(2200,600+text.length*22));
+  hideTyping();
+  addBubble(text,'in');
+  history.push({from:'biz',text});
 }
-function match(text){
-  let best=null,bestScore=0;
-  (BRAIN.intents||[]).forEach(it=>{const sc=score(text,it.patterns||[]);
-    if(sc>bestScore){bestScore=sc;best=it;}});
-  return bestScore>0?best:null;
-}
-function handle(text){
-  text=text.trim();if(!text)return;
+
+async function handle(text){
+  text=(text||'').trim();
+  if(!text||busy)return;
+  busy=true;input.disabled=true;
   addBubble(text,'out');input.value='';qrBox.innerHTML='';
-  const it=match(text);
-  if(it){
-    const replies=Array.isArray(it.reply)?it.reply:[it.reply];
-    let i=0;const next=()=>{if(i<replies.length){const r=replies[i++];
-      botSay(r, i<replies.length?next:()=>renderQR(it.quick_replies||BRAIN.quick_replies));};};
-    next();
-  } else {
-    botSay(BRAIN.fallback, ()=>renderQR(BRAIN.quick_replies));
+  const sent=history.slice();          // prior turns only — current msg goes in `message`
+  history.push({from:'them',text});
+  showTyping();
+  let bubbles=null, capped=false;
+  try{
+    const res=await fetch(CFG.worker,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({leadSlug:CFG.slug,message:text,history:sent})
+    });
+    const data=await res.json();
+    if(data&&Array.isArray(data.bubbles)){bubbles=data.bubbles;capped=!!data.capped;}
+  }catch(e){/* network — fall through to graceful line */}
+  hideTyping();
+  if(!bubbles||!bubbles.length){
+    bubbles=["Sorry, I dropped off there for a sec — could you say that again?"];
   }
+  for(let i=0;i<bubbles.length;i++){
+    if(i>0)await wait(350);
+    await botSay(bubbles[i]);
+  }
+  busy=false;input.disabled=false;input.focus();
+  if(!capped)renderQR(CFG.quick_replies);   // keep the prompts handy; hide once the demo caps out
 }
-document.getElementById('send').onclick=()=>handle(input.value);
+
+sendBtn.onclick=()=>handle(input.value);
 input.addEventListener('keydown',e=>{if(e.key==='Enter')handle(input.value);});
-// --- boot: opening messages, then quick replies ---
-(function boot(){
-  let i=0;const opens=BRAIN.opening||[];
-  const step=()=>{if(i<opens.length){botSay(opens[i++],step);}else{renderQR(BRAIN.quick_replies);}};
-  setTimeout(step,500);
+// --- boot: opening messages render locally (instant), then quick replies ---
+(async function boot(){
+  await wait(500);
+  for(const line of (CFG.opening||[])){await botSay(line);}
+  history.length=0;                 // opening is cosmetic; the Worker re-adds it as context
+  renderQR(CFG.quick_replies);
 })();
 </script>
 </body>
