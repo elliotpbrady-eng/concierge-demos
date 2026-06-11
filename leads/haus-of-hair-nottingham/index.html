@@ -87,7 +87,7 @@
 // Page config: which lead this is + where the live brain lives. The opening
 // lines + quick replies render instantly client-side (snappy, no latency); every
 // real reply is generated live by the Concierge Worker (OpenAI, key server-side).
-const CFG = {"slug": "haus-of-hair-nottingham", "worker": "https://concierge-demo.elliotpbrady.workers.dev", "opening": ["Hi 👋 You're through to Haus Of Hair on Flying Horse Arcade — Niamh here.", "After a colour, a cut, extensions, or want to check availability? Just ask 😊"], "quick_replies": ["Can I book a balayage?", "Do you do extensions?", "What days are you open?", "Where are you based?"]};
+const CFG = {"slug": "haus-of-hair-nottingham", "worker": "https://concierge-demo.elliotpbrady.workers.dev", "opening": ["Hi, I’m Rosie, front desk at Haus Of Hair by Sarah Shakespeare in Nottingham city centre.", "I can help with treatments, consultations, opening hours and bookings. What can I help you with today?"], "quick_replies": ["Can I book balayage?", "Tell me about hair extensions", "What are your opening hours?", "Where is the salon?"]};
 const chat = document.getElementById('chat'), qrBox = document.getElementById('qr'),
       input = document.getElementById('msg'), sendBtn = document.getElementById('send'),
       statusEl = document.getElementById('status');
